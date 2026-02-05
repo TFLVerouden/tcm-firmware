@@ -675,7 +675,7 @@ void loop() {
     } else if (strncmp(command, "L?", 2) == 0) {
 
       if (dataIndex == 0) {
-        Serial.println("No dataset in memory! L one first.");
+        Serial.println("No dataset in memory! Load one first.");
       } else {
         Serial.print("Saved dataset is: ");
         Serial.print(incomingCount);
