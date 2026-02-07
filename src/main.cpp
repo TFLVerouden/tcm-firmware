@@ -101,7 +101,7 @@ struct __attribute__((__packed__)) LogEntry {
 #define MAX_RECORDS 2000
 LogEntry logs[MAX_RECORDS];
 int currentCount = 0;
-uint32_t runCounter = 0;        // Per-session run index (starts at 0 each boot)
+uint32_t runCounter = 0; // Per-session run index (starts at 0 each boot)
 char lastSavedFilename[32] = ""; // Latest file saved during this session
 float lastPressure_mA = 0.0f;    // Persisted pressure regulator setting [mA]
 bool pressureInitializedFromFlash = false; // Valid persisted pressure loaded
@@ -239,7 +239,6 @@ void loadPersistentState() {
     line[len] = '\0';
 
     // Parse known keys line-by-line
-    unsigned long value = 0;
     float floatValue = 0.0f;
     if (sscanf(line, "lastPressure_mA=%f", &floatValue) == 1) {
       lastPressure_mA = floatValue;
@@ -572,8 +571,6 @@ void loop() {
   static bool isExecuting = false; // Tracks if waiting to run loaded sequence
   static bool setPressure =
       pressureInitializedFromFlash; // Tracks if pressure regulator has been set
-  static bool dropletTriggeredRun =
-      false; // True when a droplet triggered the current run
 
   auto startDropletDetection = [&]() -> bool {
     // Validate prerequisites before arming detection
@@ -595,7 +592,6 @@ void loop() {
     isExecuting = false;
     sequenceIndex = 0;
     delayedRunPending = false;
-    dropletTriggeredRun = false;
 
     // Turn on laser and start timing for detection
     startLaser();
@@ -654,7 +650,6 @@ void loop() {
         if (dropletRunsRemaining > 0) {
           dropletRunsRemaining--;
         }
-        dropletTriggeredRun = true;
 
         // Turn off laser immediately when droplet is detected
         stopLaser();
@@ -738,7 +733,6 @@ void loop() {
       // Persist and stream the log for this run
       saveToFlash();
       dumpToSerial();
-      dropletTriggeredRun = false;
 
       // If in multi-run mode, re-arm detection for the next droplet
       if (dropletRunsRemaining != 0) {
@@ -1036,7 +1030,6 @@ void loop() {
       }
       delayedRunPending = false;
       dropletRunsRemaining = 0;
-      dropletTriggeredRun = false;
       setLedColor(COLOR_IDLE);
 
     } else if (strncmp(command, "D", 1) == 0) {
