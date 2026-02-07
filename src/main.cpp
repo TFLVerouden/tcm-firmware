@@ -25,6 +25,8 @@
 // Debug output is disabled by default and can be enabled via the B command.
 bool debug_enabled = false;
 
+// Convenience macros to keep debug logging cheap when disabled
+
 #define DEBUG_PRINT(x)                                                         \
   do {                                                                         \
     if (debug_enabled) {                                                       \
@@ -41,6 +43,7 @@ bool debug_enabled = false;
 // ============================================================================
 // PIN DEFINITIONS
 // ============================================================================
+// Hardware pin mapping for the ItsyBitsy M4
 const int PIN_VALVE = 7;       // MOSFET gate pin for solenoid valve control
 const int PIN_PROP_VALVE = 11; // Chip select for proportional valve
 const int PIN_PRES_REG = 10;   // Chip select for pressure regulator
@@ -53,6 +56,7 @@ const int PIN_PDA = A2;   // Analog input from photodetector
 // ============================================================================
 // INITIALIZE DVG_STREAMCOMMAND AND FLOW CURVE DATASETS
 // ============================================================================
+// Buffers used for receiving and storing the uploaded dataset
 const int MAX_DATA_LENGTH = 2000; // Max serial dataset size
 const uint16_t CMD_BUF_LEN =
     32000;                       // RAM size allocation for Serial buffer size
@@ -67,6 +71,7 @@ DvG_StreamCommand sc(Serial, cmd_buf, CMD_BUF_LEN);
 // ============================================================================
 // DATASET PROCESSING & EXECUTION VARIABLES
 // ============================================================================
+// Indices and counters used during dataset playback
 int sequenceIndex = 0;     // Index of dataset to execute on time
 int dataIndex = 0;         // Number of datapoints of dataset stored
 int datasetDuration = 0.0; // Duration of the uploaded flow profile
@@ -74,6 +79,7 @@ int datasetDuration = 0.0; // Duration of the uploaded flow profile
 // ============================================================================
 // SETUP FOR QSPI FLASH FILESYSTEM
 // ============================================================================
+// QSPI flash storage for logged datasets
 // Setup for the ItsyBitsy M4 internal QSPI flash
 Adafruit_FlashTransport_QSPI flashTransport;
 Adafruit_SPIFlash flash(&flashTransport);
@@ -83,6 +89,7 @@ FatFileSystem fatfs;
 // ============================================================================
 // DATASET EXECUTION LOGGING STRUCTURE (IN RAM)
 // ============================================================================
+// Log format stored in RAM before it is saved to flash
 struct __attribute__((__packed__)) LogEntry {
   uint32_t timestamp; // 4 bytes (micros)
   int8_t valve1;      // 1 byte (1, 0, -1)
@@ -94,14 +101,15 @@ struct __attribute__((__packed__)) LogEntry {
 #define MAX_RECORDS 2000
 LogEntry logs[MAX_RECORDS];
 int currentCount = 0;
-uint32_t runCounter = 0;
-char lastSavedFilename[32] = "";
-float lastPressure_mA = 0.0f;
-bool pressureInitializedFromFlash = false;
+uint32_t runCounter = 0;        // Per-session run index (starts at 0 each boot)
+char lastSavedFilename[32] = ""; // Latest file saved during this session
+float lastPressure_mA = 0.0f;    // Persisted pressure regulator setting [mA]
+bool pressureInitializedFromFlash = false; // Valid persisted pressure loaded
 
 // ============================================================================
 // TIMING PARAMETERS
 // ============================================================================
+// Timing constants for trigger, droplet detection, and run scheduling
 const uint32_t TRIGGER_WIDTH = 10000; // Trigger pulse width [µs] (10ms)
 uint32_t tick = 0;                    // Timestamp for timing events [µs]
 
@@ -118,7 +126,7 @@ uint32_t runCallTime = 0; // Time elapsed since "RUN" command [µs]
 
 // Session tracking for saved files
 uint32_t lastSessionCount = 0;
-const char *STATE_FILE = "run_state.txt";
+const char *STATE_FILE = "run_state.txt"; // Stores persistent settings
 
 // ============================================================================
 // SENSOR CONFIGURATION
@@ -141,6 +149,7 @@ const float PDA_MIN_VALID = 0.1; // Minimum valid signal [V] (detect PSU off)
 // ============================================================================
 // T CLICK CONFIGURATION (proportional valve and pressure regulator)
 // ============================================================================
+// Proportional valve and pressure regulator interfaces
 T_Click valve(PIN_PROP_VALVE, RT_Click_Calibration{3.97, 19.90, 796, 3982});
 T_Click pressure(PIN_PRES_REG, RT_Click_Calibration{3.97, 19.90, 796, 3982});
 
@@ -183,6 +192,7 @@ void setLedColor(uint32_t color) {
 // FUNCTION TO STORE EXECUTION EVENTS IN RAM
 // ============================================================================
 void recordEvent(int8_t v1, float v2, float press) {
+  // Append a log entry if there is space
   if (currentCount < MAX_RECORDS) {
     logs[currentCount] = {micros(), v1, v2, press};
     currentCount++;
@@ -193,6 +203,7 @@ void recordEvent(int8_t v1, float v2, float press) {
 // FUNCTION TO STORE DATA TO FLASH INSTEAD OF RAM
 // ============================================================================
 void savePersistentState() {
+  // Store selected settings so they survive power cycles
   if (fatfs.exists(STATE_FILE)) {
     fatfs.remove(STATE_FILE);
   }
@@ -203,6 +214,7 @@ void savePersistentState() {
     return;
   }
 
+  // Only persist pressure when it is known to be valid
   if (pressureInitializedFromFlash) {
     file.printf("lastPressure_mA=%.2f\n", lastPressure_mA);
   }
@@ -210,6 +222,7 @@ void savePersistentState() {
 }
 
 void loadPersistentState() {
+  // Restore settings if the state file exists
   if (!fatfs.exists(STATE_FILE)) {
     return;
   }
@@ -225,10 +238,12 @@ void loadPersistentState() {
     size_t len = file.readBytesUntil('\n', line, sizeof(line) - 1);
     line[len] = '\0';
 
+    // Parse known keys line-by-line
     unsigned long value = 0;
     float floatValue = 0.0f;
     if (sscanf(line, "lastPressure_mA=%f", &floatValue) == 1) {
       lastPressure_mA = floatValue;
+      // Validate range before applying
       if (lastPressure_mA >= min_mA_pres_reg && lastPressure_mA <= max_mA) {
         pressureInitializedFromFlash = true;
       }
@@ -238,6 +253,7 @@ void loadPersistentState() {
 }
 
 void startRunSession() {
+  // Clean up old session files so new runs can overwrite them
   for (uint32_t i = 1; i <= lastSessionCount; i++) {
     char filename[32];
     snprintf(filename, sizeof(filename), "experiment_dataset_%04lu.csv",
@@ -246,6 +262,7 @@ void startRunSession() {
       fatfs.remove(filename);
     }
   }
+  // Reset per-session counters and filename tracking
   runCounter = 0;
   lastSavedFilename[0] = '\0';
   lastSessionCount = 0;
@@ -253,10 +270,12 @@ void startRunSession() {
 }
 
 void saveToFlash() {
+  // Advance run index and build the filename for this run
   runCounter++;
   snprintf(lastSavedFilename, sizeof(lastSavedFilename),
            "experiment_dataset_%04lu.csv",
            static_cast<unsigned long>(runCounter));
+  // Track how many files exist in the current session
   if (runCounter > lastSessionCount) {
     lastSessionCount = runCounter;
   }
@@ -265,6 +284,7 @@ void saveToFlash() {
   File file = fatfs.open(lastSavedFilename, FILE_WRITE);
 
   if (file) {
+    // Add run metadata and logged data rows
     file.printf("Run,%lu\n", static_cast<unsigned long>(runCounter));
     file.printf("Trigger T0 (us),%lu\n", tick);
     file.println("us,v1 action,v2 set mA,bar"); // Header
@@ -281,6 +301,7 @@ void saveToFlash() {
 }
 
 void dumpToSerial() {
+  // Stream the latest run file over serial
   if (strlen(lastSavedFilename) == 0) {
     DEBUG_PRINTLN("No dataset saved yet!");
     return;
@@ -293,6 +314,7 @@ void dumpToSerial() {
 
   File file = fatfs.open(lastSavedFilename, FILE_READ);
   if (file) {
+    // Announce the file and run index for host parsing
     Serial.print("FILE: ");
     Serial.println(lastSavedFilename);
     Serial.print("RUN: ");
@@ -315,7 +337,7 @@ void dumpToSerial() {
 // ============================================================================
 
 void setup() {
-  // Configure pin modes
+  // Basic pin modes and safe default states
   pinMode(PIN_LED, OUTPUT);
   pinMode(PIN_VALVE, OUTPUT);
   pinMode(PIN_CS_RCLICK, INPUT);
@@ -393,10 +415,12 @@ void setup() {
   DEBUG_PRINTLN("Flash filesystem mounted successfully.");
 
   loadPersistentState();
+  // Always reset run counters on boot; only pressure persists
   runCounter = 0;
   lastSessionCount = 0;
   lastSavedFilename[0] = '\0';
   if (pressureInitializedFromFlash) {
+    // Restore last pressure regulator setting if available
     pressure.set_mA(lastPressure_mA);
   }
 }
@@ -475,7 +499,7 @@ void printError(const char *message) {
 }
 
 void readPressure(bool valveOpen) {
-  // Read current pressure from R-Click sensor
+  // Read current pressure from R-Click sensor and send over serial
   // Conversion formula: Pressure = 0.6249 * I[mA] - 2.4882
   // where I is the 4-20mA current output
   setLedColor(COLOR_READING); // Show color during reading
@@ -519,6 +543,7 @@ float readPhotodetector() {
 }
 
 void resetDataArrays() {
+  // Clear all dataset buffers and indices
   memset(time_array, 0, sizeof(time_array));
   memset(value_array, 0, sizeof(value_array));
   memset(sol_enable_array, 0, sizeof(sol_enable_array));
@@ -551,6 +576,7 @@ void loop() {
       false; // True when a droplet triggered the current run
 
   auto startDropletDetection = [&]() -> bool {
+    // Validate prerequisites before arming detection
     if (dataIndex == 0) {
       printError("Dataset is empty! Upload first using L command.");
       return false;
@@ -560,7 +586,7 @@ void loop() {
       return false;
     }
 
-    // Ensure clean state
+    // Ensure clean state before arming detection
     if (solValveOpen) {
       closeSolValve();
       solValveOpen = false;
@@ -571,7 +597,7 @@ void loop() {
     delayedRunPending = false;
     dropletTriggeredRun = false;
 
-    // Turn on laser
+    // Turn on laser and start timing for detection
     startLaser();
     setLedColor(COLOR_LASER);
     detectingDroplet = true;
@@ -600,6 +626,7 @@ void loop() {
   // -------------------------------------------------------------------------
   // Droplet detection monitoring
   // -------------------------------------------------------------------------
+  // When armed, wait for photodetector delay and watch for threshold crossing
   if (detectingDroplet) {
     uint32_t elapsedSinceStart = micros() - detectionStartTime;
 
@@ -643,6 +670,7 @@ void loop() {
   // Handle delayed dataset start after droplet detection/R command
   // TODO: Test whether this also works for R command with pre-trigger delay
   // -------------------------------------------------------------------------
+  // Wait for the configured pre-trigger delay before starting the dataset
   if (delayedRunPending) {
     uint32_t elapsed = micros() - delayedRunStartTime;
 
@@ -664,7 +692,7 @@ void loop() {
     }
   }
 
-  // Execute loaded dataset
+  // Drives the proportional valve, solenoid, and trigger based on the dataset
   if (isExecuting) {
     // Calculate time since start execution
     uint32_t now = (micros() - runCallTime); // Time since RUN is called [µs]
@@ -707,10 +735,12 @@ void loop() {
       isExecuting = false;
       sequenceIndex = 0;
       setLedColor(COLOR_OFF);
+      // Persist and stream the log for this run
       saveToFlash();
       dumpToSerial();
       dropletTriggeredRun = false;
 
+      // If in multi-run mode, re-arm detection for the next droplet
       if (dropletRunsRemaining != 0) {
         if (!startDropletDetection()) {
           dropletRunsRemaining = 0;
@@ -724,6 +754,7 @@ void loop() {
   // Process serial commands
   // =========================================================================
   if (sc.available()) {
+    // Fetch and decode the latest command line
     char *command =
         sc.getCommand(); // Pointer to memory location of serial buffer contents
 
@@ -775,6 +806,7 @@ void loop() {
       // Command: P <bar>
       // Set pressure regulator to <bar>
 
+      // Mark that pressure has been explicitly set
       if (!setPressure) {
         setPressure = true;
       }
@@ -798,6 +830,7 @@ void loop() {
 
         // Set T_Click to input mA
       } else {
+        // Apply pressure, store it, and persist to flash
         pressure.set_mA(current);
         lastPressure_mA = current;
         pressureInitializedFromFlash = true;
@@ -948,6 +981,7 @@ void loop() {
       setLedColor(COLOR_OFF);
 
     } else if (strncmp(command, "R", 1) == 0) {
+      // Start a single run using the loaded dataset
       if (dataIndex == 0) {
         printError("Dataset is empty! Upload first using L command.");
         setLedColor(COLOR_ERROR);
@@ -956,6 +990,7 @@ void loop() {
       } else if (!setPressure) {
         printError("Pressure regulator not set! Set it first using P command.");
       } else {
+        // New session: clear old files and reset counters
         startRunSession();
         delayedRunPending = (pre_trigger_delay_us > 0);
         delayedRunStartTime = micros();
@@ -1020,6 +1055,7 @@ void loop() {
       }
 
       dropletRunsRemaining = requestedCount;
+      // New session: clear old files and reset counters
       startRunSession();
       if (!startDropletDetection()) {
         dropletRunsRemaining = 0;
