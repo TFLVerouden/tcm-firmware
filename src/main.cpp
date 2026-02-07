@@ -94,6 +94,8 @@ struct __attribute__((__packed__)) LogEntry {
 #define MAX_RECORDS 2000
 LogEntry logs[MAX_RECORDS];
 int currentCount = 0;
+uint32_t runCounter = 0;
+char lastSavedFilename[32] = "";
 
 // ============================================================================
 // TIMING PARAMETERS
@@ -107,8 +109,13 @@ uint32_t pre_trigger_delay_us =
 uint32_t pda_delay =
     10000; // Delay before photodiode starts detecting again [µs]
 
+int32_t dropletRunsRemaining = 0; // -1 = continuous, 0 = idle, >0 = remaining
+
 // This is just another ticker
 uint32_t runCallTime = 0; // Time elapsed since "RUN" command [µs]
+
+// Session tracking for saved files
+uint32_t lastSessionCount = 0;
 
 // ============================================================================
 // SENSOR CONFIGURATION
@@ -182,13 +189,30 @@ void recordEvent(int8_t v1, float v2, float press) {
 // ============================================================================
 // FUNCTION TO STORE DATA TO FLASH INSTEAD OF RAM
 // ============================================================================
+void startRunSession() {
+  for (uint32_t i = 1; i <= lastSessionCount; i++) {
+    char filename[32];
+    snprintf(filename, sizeof(filename), "experiment_dataset_%04lu.csv",
+             static_cast<unsigned long>(i));
+    if (fatfs.exists(filename)) {
+      fatfs.remove(filename);
+    }
+  }
+  runCounter = 0;
+  lastSavedFilename[0] = '\0';
+  lastSessionCount = 0;
+}
+
 void saveToFlash() {
-  // Remove the old file if it exists
-  if (fatfs.exists("experiment_dataset.csv")) {
-    fatfs.remove("experiment_dataset.csv");
+  runCounter++;
+  snprintf(lastSavedFilename, sizeof(lastSavedFilename),
+           "experiment_dataset_%04lu.csv",
+           static_cast<unsigned long>(runCounter));
+  if (runCounter > lastSessionCount) {
+    lastSessionCount = runCounter;
   }
 
-  File file = fatfs.open("experiment_dataset.csv", FILE_WRITE);
+  File file = fatfs.open(lastSavedFilename, FILE_WRITE);
 
   if (file) {
     file.printf("Trigger T0 (us),%lu\n", tick);
@@ -206,13 +230,17 @@ void saveToFlash() {
 }
 
 void dumpToSerial() {
-
-  if (!fatfs.exists("experiment_dataset.csv")) {
-    DEBUG_PRINTLN("No dataset file found in flash!");
+  if (strlen(lastSavedFilename) == 0) {
+    DEBUG_PRINTLN("No dataset saved yet!");
     return;
   }
 
-  File file = fatfs.open("experiment_dataset.csv", FILE_READ);
+  if (!fatfs.exists(lastSavedFilename)) {
+    DEBUG_PRINTLN("Last dataset file not found in flash!");
+    return;
+  }
+
+  File file = fatfs.open(lastSavedFilename, FILE_READ);
   if (file) {
     Serial.println("START_OF_FILE");
 
@@ -456,6 +484,39 @@ void loop() {
   static bool isExecuting = false; // Tracks if waiting to run loaded sequence
   static bool setPressure =
       false; // Tracks if pressure regulator has been set at least once
+  static bool dropletTriggeredRun =
+      false; // True when a droplet triggered the current run
+
+  auto startDropletDetection = [&]() -> bool {
+    if (dataIndex == 0) {
+      printError("Dataset is empty! Upload first using L command.");
+      return false;
+    }
+    if (!setPressure) {
+      printError("Pressure regulator not set! Set it first using P command.");
+      return false;
+    }
+
+    // Ensure clean state
+    if (solValveOpen) {
+      closeSolValve();
+      solValveOpen = false;
+    }
+    valve.set_mA(default_valve);
+    isExecuting = false;
+    sequenceIndex = 0;
+    delayedRunPending = false;
+    dropletTriggeredRun = false;
+
+    // Turn on laser
+    startLaser();
+    setLedColor(COLOR_LASER);
+    detectingDroplet = true;
+    belowThreshold = false;
+    detectionStartTime = micros();
+    DEBUG_PRINTLN("Detecting droplets (primed to cough)");
+    return true;
+  };
 
   // -------------------------------------------------------------------------
   // Handle trigger pulse timing
@@ -490,6 +551,7 @@ void loop() {
         detectingDroplet = false;
         belowThreshold = false;
         delayedRunPending = false;
+        dropletRunsRemaining = 0;
         setLedColor(COLOR_IDLE);
         return;
       }
@@ -499,6 +561,10 @@ void loop() {
         belowThreshold = true;
         delayedRunPending = true;
         delayedRunStartTime = micros();
+        if (dropletRunsRemaining > 0) {
+          dropletRunsRemaining--;
+        }
+        dropletTriggeredRun = true;
 
         // Turn off laser immediately when droplet is detected
         stopLaser();
@@ -579,6 +645,14 @@ void loop() {
       sequenceIndex = 0;
       setLedColor(COLOR_OFF);
       saveToFlash();
+      dumpToSerial();
+      dropletTriggeredRun = false;
+
+      if (dropletRunsRemaining != 0) {
+        if (!startDropletDetection()) {
+          dropletRunsRemaining = 0;
+        }
+      }
       return;
     }
   }
@@ -816,6 +890,7 @@ void loop() {
       } else if (!setPressure) {
         printError("Pressure regulator not set! Set it first using P command.");
       } else {
+        startRunSession();
         delayedRunPending = (pre_trigger_delay_us > 0);
         delayedRunStartTime = micros();
 
@@ -829,11 +904,6 @@ void loop() {
           Serial.println("EXECUTING_DATASET");
         }
       }
-
-    } else if (strncmp(command, "F", 1) == 0) {
-
-      DEBUG_PRINTLN("Dumping data to serial");
-      dumpToSerial();
 
       // ---------------------------------------------------------------------
       // Solenoid and droplet detection: O / C / D / W
@@ -864,38 +934,30 @@ void loop() {
         detectingDroplet = false;
       }
       delayedRunPending = false;
+      dropletRunsRemaining = 0;
+      dropletTriggeredRun = false;
       setLedColor(COLOR_IDLE);
 
     } else if (strncmp(command, "D", 1) == 0) {
       // Command: D
       // Arm droplet detection; upon droplet detection wait W delay and run
       // the currently loaded dataset.
-      if (dataIndex == 0) {
-        printError("Dataset is empty! Upload first using L command.");
-        return;
-      }
-      if (!setPressure) {
-        printError("Pressure regulator not set! Set it first using P command.");
-        return;
+      // Optional count: D <n>. Without a number: run indefinitely.
+
+      int32_t requestedCount = -1;
+      if (strlen(command) > 1) {
+        requestedCount = parseIntInString(command, 1);
+        if (requestedCount <= 0) {
+          printError("D count must be >= 1");
+          return;
+        }
       }
 
-      // Ensure clean state
-      if (solValveOpen) {
-        closeSolValve();
-        solValveOpen = false;
+      dropletRunsRemaining = requestedCount;
+      startRunSession();
+      if (!startDropletDetection()) {
+        dropletRunsRemaining = 0;
       }
-      valve.set_mA(default_valve);
-      isExecuting = false;
-      sequenceIndex = 0;
-      delayedRunPending = false;
-
-      // Turn on laser
-      startLaser();
-      setLedColor(COLOR_LASER);
-      detectingDroplet = true;
-      belowThreshold = false;
-      detectionStartTime = micros();
-      DEBUG_PRINTLN("Detecting droplets (primed to cough)");
 
     } else if (strncmp(command, "W", 1) == 0) {
       // Command: W <delay_us>
@@ -924,6 +986,7 @@ void loop() {
       DEBUG_PRINTLN("\n=== Available Commands ===");
       DEBUG_PRINTLN("R       - RUN loaded dataset");
       DEBUG_PRINTLN("D       - DROPLET-detect then run dataset");
+      DEBUG_PRINTLN("D <n>   - DROPLET-detect n times then stop");
       DEBUG_PRINTLN("W <us>  - Set WAIT before run (µs)");
       DEBUG_PRINTLN("P <bar> - Set PRESSURE on tank (bar)");
       DEBUG_PRINTLN("P?      - Read PRESSURE");
@@ -934,7 +997,6 @@ void loop() {
                     "- LOAD dataset, format: "
                     "<ms0>,<mA0>,<e0>,<ms1>,<mA1>,<e1>,...,<msN>,<mAN>,<eN>");
       DEBUG_PRINTLN("L?      - Show LOADED dataset status");
-      DEBUG_PRINTLN("F       - Dump logged execution data FILE over serial");
       DEBUG_PRINTLN("T?      - Read TEMPERATURE & humidity");
       DEBUG_PRINTLN("S?      - System STATUS");
       DEBUG_PRINTLN("B <0|1> - DeBUG output off/on");
@@ -966,6 +1028,8 @@ void loop() {
       DEBUG_PRINT("Photodiode detection delay: ");
       DEBUG_PRINT(pda_delay);
       DEBUG_PRINTLN(" µs");
+      DEBUG_PRINT("Droplet runs remaining: ");
+      DEBUG_PRINTLN(dropletRunsRemaining);
       DEBUG_PRINT("Pressure (raw): ");
       DEBUG_PRINT(R_click.get_EMA_mA());
       DEBUG_PRINT("Pressure (bar): ");
