@@ -96,6 +96,8 @@ LogEntry logs[MAX_RECORDS];
 int currentCount = 0;
 uint32_t runCounter = 0;
 char lastSavedFilename[32] = "";
+float lastPressure_mA = 0.0f;
+bool pressureInitializedFromFlash = false;
 
 // ============================================================================
 // TIMING PARAMETERS
@@ -116,6 +118,7 @@ uint32_t runCallTime = 0; // Time elapsed since "RUN" command [µs]
 
 // Session tracking for saved files
 uint32_t lastSessionCount = 0;
+const char *STATE_FILE = "run_state.txt";
 
 // ============================================================================
 // SENSOR CONFIGURATION
@@ -189,6 +192,51 @@ void recordEvent(int8_t v1, float v2, float press) {
 // ============================================================================
 // FUNCTION TO STORE DATA TO FLASH INSTEAD OF RAM
 // ============================================================================
+void savePersistentState() {
+  if (fatfs.exists(STATE_FILE)) {
+    fatfs.remove(STATE_FILE);
+  }
+
+  File file = fatfs.open(STATE_FILE, FILE_WRITE);
+  if (!file) {
+    DEBUG_PRINTLN("Error opening state file for writing!");
+    return;
+  }
+
+  if (pressureInitializedFromFlash) {
+    file.printf("lastPressure_mA=%.2f\n", lastPressure_mA);
+  }
+  file.close();
+}
+
+void loadPersistentState() {
+  if (!fatfs.exists(STATE_FILE)) {
+    return;
+  }
+
+  File file = fatfs.open(STATE_FILE, FILE_READ);
+  if (!file) {
+    DEBUG_PRINTLN("Error opening state file for reading!");
+    return;
+  }
+
+  char line[64];
+  while (file.available()) {
+    size_t len = file.readBytesUntil('\n', line, sizeof(line) - 1);
+    line[len] = '\0';
+
+    unsigned long value = 0;
+    float floatValue = 0.0f;
+    if (sscanf(line, "lastPressure_mA=%f", &floatValue) == 1) {
+      lastPressure_mA = floatValue;
+      if (lastPressure_mA >= min_mA_pres_reg && lastPressure_mA <= max_mA) {
+        pressureInitializedFromFlash = true;
+      }
+    }
+  }
+  file.close();
+}
+
 void startRunSession() {
   for (uint32_t i = 1; i <= lastSessionCount; i++) {
     char filename[32];
@@ -201,6 +249,7 @@ void startRunSession() {
   runCounter = 0;
   lastSavedFilename[0] = '\0';
   lastSessionCount = 0;
+  savePersistentState();
 }
 
 void saveToFlash() {
@@ -211,6 +260,7 @@ void saveToFlash() {
   if (runCounter > lastSessionCount) {
     lastSessionCount = runCounter;
   }
+  savePersistentState();
 
   File file = fatfs.open(lastSavedFilename, FILE_WRITE);
 
@@ -341,6 +391,14 @@ void setup() {
     }
   }
   DEBUG_PRINTLN("Flash filesystem mounted successfully.");
+
+  loadPersistentState();
+  runCounter = 0;
+  lastSessionCount = 0;
+  lastSavedFilename[0] = '\0';
+  if (pressureInitializedFromFlash) {
+    pressure.set_mA(lastPressure_mA);
+  }
 }
 
 // ============================================================================
@@ -488,7 +546,7 @@ void loop() {
       0;                           // When laser/detection was started [µs]
   static bool isExecuting = false; // Tracks if waiting to run loaded sequence
   static bool setPressure =
-      false; // Tracks if pressure regulator has been set at least once
+      pressureInitializedFromFlash; // Tracks if pressure regulator has been set
   static bool dropletTriggeredRun =
       false; // True when a droplet triggered the current run
 
@@ -741,6 +799,9 @@ void loop() {
         // Set T_Click to input mA
       } else {
         pressure.set_mA(current);
+        lastPressure_mA = current;
+        pressureInitializedFromFlash = true;
+        savePersistentState();
         DEBUG_PRINT("Last set bitvalue of pressure regulator: ");
         DEBUG_PRINTLN(pressure.get_last_set_bitval());
       }
