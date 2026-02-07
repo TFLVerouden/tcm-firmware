@@ -215,6 +215,7 @@ void saveToFlash() {
   File file = fatfs.open(lastSavedFilename, FILE_WRITE);
 
   if (file) {
+    file.printf("Run,%lu\n", static_cast<unsigned long>(runCounter));
     file.printf("Trigger T0 (us),%lu\n", tick);
     file.println("us,v1 action,v2 set mA,bar"); // Header
     for (int i = 0; i < currentCount; i++) {
@@ -242,6 +243,10 @@ void dumpToSerial() {
 
   File file = fatfs.open(lastSavedFilename, FILE_READ);
   if (file) {
+    Serial.print("FILE: ");
+    Serial.println(lastSavedFilename);
+    Serial.print("RUN: ");
+    Serial.println(static_cast<unsigned long>(runCounter));
     Serial.println("START_OF_FILE");
 
     while (file.available()) {
