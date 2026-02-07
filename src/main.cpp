@@ -198,7 +198,7 @@ void saveToFlash() {
                   logs[i].valve2_mA, logs[i].pressure);
     }
     file.close();
-    Serial.println("DONE_SAVING_TO_FLASH");
+    Serial.println("SAVED_TO_FLASH");
   } else {
     DEBUG_PRINTLN("Error opening file for writing!");
   }
@@ -271,7 +271,7 @@ void setup() {
 
   // Initialize the SHT4x temperature & humidity sensor
   if (!sht4.begin()) {
-    Serial.println("Failed to find SHT4x sensor!");
+    Serial.println("ERROR: FAILED_TO_FIND_SHT4X_SENSOR");
     // Blink orange for fatal error
     while (1) {
       setLedColor(COLOR_ERROR);
@@ -343,11 +343,8 @@ void closeSolValve() {
               0.62350602 * R_click.get_EMA_mA() -
                   2.51344790); // Log valve close event
 
-  DEBUG_PRINTLN(
-      "Solenoid valve closed using closeSolValve()"); // Valve closed
-                                                      // confirmation (debug
-                                                      // only for speed)
-  // Serial.println("!");
+  DEBUG_PRINTLN("SOLENOID_VALVE_CLOSED"); // Valve closed confirmation (debug
+                                          // only for speed)
 }
 
 void startLaser() {
@@ -356,7 +353,7 @@ void startLaser() {
   PORT->Group[g_APinDescription[PIN_LASER].ulPort].OUTSET.reg =
       (1 << g_APinDescription[PIN_LASER].ulPin);
 
-  DEBUG_PRINTLN("Laser ON");
+  DEBUG_PRINTLN("LASER_ON");
 }
 
 void stopLaser() {
@@ -365,7 +362,7 @@ void stopLaser() {
   PORT->Group[g_APinDescription[PIN_LASER].ulPort].OUTCLR.reg =
       (1 << g_APinDescription[PIN_LASER].ulPin);
 
-  DEBUG_PRINTLN("Laser OFF");
+  DEBUG_PRINTLN("LASER_OFF");
 }
 
 void stopTrigger() {
@@ -392,8 +389,9 @@ void readPressure(bool valveOpen) {
   // where I is the 4-20mA current output
   setLedColor(COLOR_READING); // Show color during reading
   Serial.print("P");
-  Serial.print(0.62350602 * R_click.get_EMA_mA() - 2.51344790);
-  Serial.println();
+  Serial.println(0.62350602 * R_click.get_EMA_mA() - 2.51344790);
+  // TODO: Made above line println and removed empty println before -> check
+
   // Restore LED color based on valve state
   setLedColor(valveOpen ? COLOR_VALVE_OPEN : COLOR_IDLE);
   DEBUG_PRINT("R Click bitvalue: ");
@@ -502,13 +500,12 @@ void loop() {
         delayedRunPending = true;
         delayedRunStartTime = micros();
 
-        Serial.println("!");
         // Turn off laser immediately when droplet is detected
         stopLaser();
         detectingDroplet = false;
 
         setLedColor(COLOR_DROPLET);
-        DEBUG_PRINTLN("Droplet detected!");
+        Serial.println("DROPLET_DETECTED");
       }
     }
   }
@@ -675,13 +672,13 @@ void loop() {
     } else if (strncmp(command, "L?", 2) == 0) {
 
       if (dataIndex == 0) {
-        Serial.println("No dataset in memory! Load one first.");
+        Serial.println("NO_DATASET");
       } else {
-        Serial.print("Saved dataset is: ");
+        Serial.print("DATASET: ");
         Serial.print(incomingCount);
-        Serial.print(" datapoints long and takes ");
+        Serial.print(" LINES AND ");
         Serial.print(datasetDuration);
-        Serial.println(" ms.");
+        Serial.println(" MS");
       }
 
     } else if (strncmp(command, "L", 1) == 0) {
@@ -898,7 +895,7 @@ void loop() {
       detectingDroplet = true;
       belowThreshold = false;
       detectionStartTime = micros();
-      DEBUG_PRINTLN("Detecting droplets (armed to RUN dataset)");
+      DEBUG_PRINTLN("Detecting droplets (primed to cough)");
 
     } else if (strncmp(command, "W", 1) == 0) {
       // Command: W <delay_us>
