@@ -23,10 +23,10 @@
 // DEBUG CONFIGURATION
 // ============================================================================
 // Debug output is disabled by default and can be enabled via the B command.
-bool debug_enabled = false;
+bool debug_enabled = true;
 
 // Convenience macros to keep debug logging cheap when disabled
-
+// TODO: Add DEBUG to print so we know what comes from debug
 #define DEBUG_PRINT(x)                                                         \
   do {                                                                         \
     if (debug_enabled) {                                                       \
@@ -632,7 +632,7 @@ void loop() {
 
       // If signal is near zero, assume PDA power is off -> abort detection
       if (signalVoltage <= PDA_MIN_VALID) {
-        printError("PDA signal too low; check photodetector power.");
+        printError("PDA signal too low; check photodetector or laser power.");
         stopLaser();
         detectingDroplet = false;
         belowThreshold = false;
@@ -730,6 +730,7 @@ void loop() {
       isExecuting = false;
       sequenceIndex = 0;
       setLedColor(COLOR_OFF);
+      Serial.println("FINISHED");
       // Persist and stream the log for this run
       saveToFlash();
       dumpToSerial();
