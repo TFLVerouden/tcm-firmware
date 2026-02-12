@@ -18,6 +18,7 @@
 // ============================================================================
 void printError(const char *message);
 template <typename T> void printError(const char *message, T value);
+void resetDataArrays();
 
 // ============================================================================
 // DEBUG CONFIGURATION
@@ -128,7 +129,7 @@ uint32_t runCallTime = 0; // Time elapsed since "RUN" command [µs]
 
 // Session tracking for saved files
 uint32_t lastSessionCount = 0;
-const char *STATE_FILE = "run_state.txt"; // Stores persistent settings
+const char *STATE_FILE = "run_state.txt";       // Stores persistent settings
 const char *DATASET_FILE = "dataset_state.bin"; // Stores last loaded dataset
 
 // ============================================================================
