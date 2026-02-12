@@ -14,6 +14,12 @@
 #include <Arduino.h>
 
 // ============================================================================
+// FORWARD DECLARATIONS
+// ============================================================================
+void printError(const char *message);
+template <typename T> void printError(const char *message, T value);
+
+// ============================================================================
 // DEBUG CONFIGURATION
 // ============================================================================
 // Debug output is disabled by default and can be enabled via the B command.
