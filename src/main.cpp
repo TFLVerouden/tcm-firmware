@@ -757,10 +757,10 @@ void loop() {
 
       // Solenoid enable controls solenoid and trigger
       if (enable && !solValveOpen) {
-        openSolValve();
-        solValveOpen = true;
         trigOut();
+        openSolValve(); // This gives ~5 us delay
         performingTrigger = true;
+        solValveOpen = true;
         tick = micros();
         setLedColor(COLOR_VALVE_OPEN);
       } else if (!enable && solValveOpen) {
