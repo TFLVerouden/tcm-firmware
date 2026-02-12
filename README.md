@@ -15,6 +15,7 @@ Commands are ASCII lines terminated by newline (\n). Units are noted per command
 - `P <bar>`: Set pressure regulator in bar.
 - `P?`: Read current pressure (bar).
 - `W <us>`: Set wait before run in microseconds.
+- `W?`: Read current wait before run in microseconds (returns `W<us>`).
 - `L <N> <duration_ms> <csv>`: Load dataset. CSV format: `<ms0>,<mA0>,<e0>,<ms1>,<mA1>,<e1>,...,<msN>,<mAN>,<eN>`.
 - `L?`: Show loaded dataset status.
 - `R`: Run the loaded dataset.

@@ -1065,6 +1065,12 @@ void loop() {
         dropletRunsRemaining = 0;
       }
 
+    } else if (strncmp(command, "W?", 2) == 0) {
+      // Command: W?
+      // Read and return current pre-trigger wait time
+      Serial.print("W");
+      Serial.println(pre_trigger_delay_us);
+
     } else if (strncmp(command, "W", 1) == 0) {
       // Command: W <delay_us>
       // Set delay between droplet detection and starting dataset execution
@@ -1116,6 +1122,7 @@ void loop() {
       DEBUG_PRINTLN("D       - DROPLET-detect then run dataset");
       DEBUG_PRINTLN("D <n>   - DROPLET-detect n times then stop");
       DEBUG_PRINTLN("W <us>  - Set WAIT before run (µs)");
+      DEBUG_PRINTLN("W?      - Read WAIT before run (µs)");
       DEBUG_PRINTLN("P <bar> - Set PRESSURE on tank (bar)");
       DEBUG_PRINTLN("P?      - Read PRESSURE");
       DEBUG_PRINTLN("A       - Toggle LASER test mode");
