@@ -13,29 +13,24 @@
 #include <Adafruit_SHT4x.h>
 #include <Arduino.h>
 
-// TODO: Make it so the opening procedure using loaded protocol can be used with
-// droplet detection -> to be tested
-// TODO: Allowed set pressure range is slightly above 0.00 bar, change mA range
-// to 3.99?
-// TODO: Some more todos down in the code...
-
 // ============================================================================
 // DEBUG CONFIGURATION
 // ============================================================================
 // Debug output is disabled by default and can be enabled via the B command.
-bool debug_enabled = true;
+bool debug_enabled = false;
 
 // Convenience macros to keep debug logging cheap when disabled
-// TODO: Add DEBUG to print so we know what comes from debug
 #define DEBUG_PRINT(x)                                                         \
   do {                                                                         \
     if (debug_enabled) {                                                       \
+      Serial.print("DEBUG: ");                                                 \
       Serial.print(x);                                                         \
     }                                                                          \
   } while (0)
 #define DEBUG_PRINTLN(x)                                                       \
   do {                                                                         \
     if (debug_enabled) {                                                       \
+      Serial.print("DEBUG: ");                                                 \
       Serial.println(x);                                                       \
     }                                                                          \
   } while (0)
@@ -399,7 +394,6 @@ void setup() {
   Serial.begin(115200);
   Serial.setTimeout(10); // Set timeout to 10ms instead of default 1000ms
 
-  // TODO: Implement averaging?
   // Set ADC resolution for photodetector
   analogReadResolution(12); // 12-bit ADC (0-4095)
 
@@ -408,14 +402,7 @@ void setup() {
 
   // Initialize the SHT4x temperature & humidity sensor
   if (!sht4.begin()) {
-    Serial.println("ERROR: FAILED_TO_FIND_SHT4X_SENSOR");
-    // Blink orange for fatal error
-    while (1) {
-      setLedColor(COLOR_ERROR);
-      delay(200);
-      setLedColor(COLOR_OFF);
-      delay(200);
-    }
+    printError("Failed to find SHT4x sensor");
   }
 
   // Configure SHT4x for high precision, no heater
@@ -427,7 +414,7 @@ void setup() {
 
   // Initialize flash and filesystem
   if (!flash.begin()) {
-    DEBUG_PRINTLN("Flash initialization failed!");
+    printError("Flash initialization failed!");
   }
   DEBUG_PRINTLN("Flash initialized.");
 
@@ -436,12 +423,12 @@ void setup() {
     DEBUG_PRINTLN("Flash chip could also not be mounted, trying to format...");
 
     if (!flash.eraseChip()) {
-      DEBUG_PRINTLN("ERROR: Failed to erase chip!");
+      printError("Failed to erase chip!");
     }
 
     // Try mounting again
     if (!fatfs.begin(&flash)) {
-      DEBUG_PRINTLN("ERROR: Still cannot mount filesystem!");
+      printError("Still cannot mount filesystem!");
     }
   }
   DEBUG_PRINTLN("Flash filesystem mounted successfully.");
@@ -474,7 +461,6 @@ void openSolValve() {
 void trigOut() {
   // Send trigger pulse using direct PORT register access for speed
   // Equivalent to digitalWrite(PIN_TRIG, HIGH);
-  // TODO: Verify trigger timing in log output to confirm this is fast enough.
   PORT->Group[g_APinDescription[PIN_TRIG].ulPort].OUTSET.reg =
       (1 << g_APinDescription[PIN_TRIG].ulPin);
 }
@@ -518,15 +504,31 @@ void stopTrigger() {
       (1 << g_APinDescription[PIN_TRIG].ulPin);
 }
 
+void flashErrorLed() {
+  // Flash orange briefly to indicate error
+  for (int i = 0; i < 5; i++) {
+    setLedColor(COLOR_ERROR);
+    delay(300);
+    setLedColor(COLOR_OFF);
+    delay(300);
+  }
+  setLedColor(COLOR_IDLE);
+}
+
 void printError(const char *message) {
   // Print error message to serial for debugging
   Serial.print("ERROR: ");
   Serial.println(message);
+  flashErrorLed();
+}
 
-  // Flash orange briefly to indicate error
-  setLedColor(COLOR_ERROR);
-  delay(300);
-  setLedColor(COLOR_IDLE);
+template <typename T> void printError(const char *message, T value) {
+  // Print error message with a variable suffix
+  Serial.print("ERROR: ");
+  Serial.print(message);
+  Serial.print(' ');
+  Serial.println(value);
+  flashErrorLed();
 }
 
 void readPressure(bool valveOpen) {
@@ -536,7 +538,6 @@ void readPressure(bool valveOpen) {
   setLedColor(COLOR_READING); // Show color during reading
   Serial.print("P");
   Serial.println(0.62350602 * R_click.get_EMA_mA() - 2.51344790);
-  // TODO: Made above line println and removed empty println before -> check
 
   // Restore LED color based on valve state
   setLedColor(valveOpen ? COLOR_VALVE_OPEN : COLOR_IDLE);
@@ -715,7 +716,6 @@ void loop() {
 
   // -------------------------------------------------------------------------
   // Handle delayed dataset start after droplet detection/R command
-  // TODO: Test whether this also works for R command with pre-trigger delay
   // -------------------------------------------------------------------------
   // Wait for the configured pre-trigger delay before starting the dataset
   if (delayedRunPending) {
@@ -855,7 +855,6 @@ void loop() {
       float current = pressureBarToCurrent(bar);
 
       // Handle out of allowable range inputs, defaults to specified value
-      // TODO: Put calculation in function
       if (!current || current < min_mA_pres_reg || current > max_mA) {
         printError("Pressure input out of range!");
 
@@ -895,10 +894,7 @@ void loop() {
       const char *delim = ","; // Serial dataset delimiter
 
       if (strlen(command) < 3) {
-        DEBUG_PRINTLN("ERROR: \"L\" command is not followed by dataset");
-        setLedColor(COLOR_ERROR);
-        delay(300);
-        setLedColor(COLOR_OFF);
+        printError("\"L\" command is not followed by dataset");
         return;
       }
 
@@ -913,13 +909,8 @@ void loop() {
 
       // Check if data length is acceptable
       if (incomingCount > MAX_DATA_LENGTH || incomingCount <= 0) {
-        DEBUG_PRINT("ERROR: data length is not allowed: 0 < N < ");
-        DEBUG_PRINT(MAX_DATA_LENGTH);
-        DEBUG_PRINTLN(", upload new dataset!");
+        printError("Data length is not allowed: 0 < N <", MAX_DATA_LENGTH);
         resetDataArrays();
-        setLedColor(COLOR_ERROR);
-        delay(300);
-        setLedColor(COLOR_OFF);
         return;
       }
 
@@ -932,14 +923,10 @@ void loop() {
                                    // item is the timestamp
         // If the item is NULL, break
         if (idx == NULL) {
-          DEBUG_PRINT("ERROR: token was NULL, breaking CSV parsing. Upload new "
-                      "dataset! (error at data index: ");
-          DEBUG_PRINT(dataIndex);
-          DEBUG_PRINTLN(")");
+          printError("Token was NULL, breaking CSV parsing. Upload new "
+                     "dataset! Error at data index ",
+                     dataIndex);
           resetDataArrays();
-          setLedColor(COLOR_ERROR);
-          delay(300);
-          setLedColor(COLOR_OFF);
           break;
         }
         // Convert incoming csv buffer index from string to int and add to time
@@ -951,14 +938,10 @@ void loop() {
             delim); // Get next csv buffer index. This item is the mA value
         // Check again if item is not NULL
         if (idx == NULL) {
-          DEBUG_PRINT("ERROR: token was NULL, breaking CSV parsing. Upload new "
-                      "dataset! (data index: ");
-          DEBUG_PRINT(dataIndex);
-          DEBUG_PRINTLN(")");
+          printError("Token was NULL, breaking CSV parsing. Upload new "
+                     "dataset! Error at data index ",
+                     dataIndex);
           resetDataArrays();
-          setLedColor(COLOR_ERROR);
-          delay(300);
-          setLedColor(COLOR_OFF);
           break;
         }
         // Convert incoming csv buffer index from string to float and add to
@@ -967,28 +950,19 @@ void loop() {
 
         idx = strtok(NULL, delim); // Get next csv buffer index: enable flag
         if (idx == NULL) {
-          DEBUG_PRINT("ERROR: token was NULL, breaking CSV parsing. Upload new "
-                      "dataset! (enable flag missing at data index: ");
-          DEBUG_PRINT(dataIndex);
-          DEBUG_PRINTLN(")");
+          printError("Token was NULL, breaking CSV parsing. Upload new "
+                     "dataset! Error at data index ",
+                     dataIndex);
           resetDataArrays();
-          setLedColor(COLOR_ERROR);
-          delay(300);
-          setLedColor(COLOR_OFF);
           break;
         }
 
         int enableInt = atoi(idx);
         if (enableInt != 0 && enableInt != 1) {
-          DEBUG_PRINT(
-              "ERROR: enable flag must be 0 or 1. Upload new dataset! (at "
-              "data index: ");
-          DEBUG_PRINT(dataIndex);
-          DEBUG_PRINTLN(")");
+          printError("Enable flag must be 0 or 1. Upload new dataset! Error at "
+                     "data index ",
+                     dataIndex);
           resetDataArrays();
-          setLedColor(COLOR_ERROR);
-          delay(300);
-          setLedColor(COLOR_OFF);
           break;
         }
         sol_enable_array[i] = (uint8_t)enableInt;
