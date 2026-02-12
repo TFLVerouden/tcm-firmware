@@ -571,6 +571,8 @@ void loop() {
   static bool isExecuting = false; // Tracks if waiting to run loaded sequence
   static bool setPressure =
       pressureInitializedFromFlash; // Tracks if pressure regulator has been set
+  static bool laserTestActive = false;    // Laser test mode on/off
+  static uint32_t laserTestLastPrint = 0; // Last photodiode print time [ms]
 
   auto startDropletDetection = [&]() -> bool {
     // Validate prerequisites before arming detection
@@ -618,6 +620,24 @@ void loop() {
   // -------------------------------------------------------------------------
   // Must be called regularly to maintain the exponential moving average
   R_click.poll_EMA();
+
+  // -------------------------------------------------------------------------
+  // Laser test mode: keep laser on and stream photodiode voltage
+  // -------------------------------------------------------------------------
+  if (laserTestActive) {
+    uint32_t now_ms = millis();
+    if (now_ms - laserTestLastPrint >= 50) {
+      float signalVoltage = readPhotodetector();
+      Serial.print("A");
+      Serial.println(signalVoltage, 3);
+
+      if (signalVoltage <= PDA_THR) {
+        Serial.println("LASER_TEST_BELOW_THRESHOLD");
+      }
+
+      laserTestLastPrint = now_ms;
+    }
+  }
 
   // -------------------------------------------------------------------------
   // Droplet detection monitoring
@@ -1062,6 +1082,26 @@ void loop() {
       DEBUG_PRINT("Pre-trigger wait: ");
       DEBUG_PRINT(pre_trigger_delay_us);
       DEBUG_PRINTLN(" µs");
+
+    } else if (strncmp(command, "A", 1) == 0) {
+      // Command: A
+      // Toggle laser test mode and stream photodiode readings
+      if (!laserTestActive) {
+        if (detectingDroplet) {
+          detectingDroplet = false;
+          belowThreshold = false;
+          delayedRunPending = false;
+        }
+        dropletRunsRemaining = 0;
+        startLaser();
+        setLedColor(COLOR_LASER);
+        laserTestActive = true;
+        laserTestLastPrint = 0;
+      } else {
+        stopLaser();
+        setLedColor(COLOR_IDLE);
+        laserTestActive = false;
+      }
 
       // ---------------------------------------------------------------------
       // Sensors: T? / S?
