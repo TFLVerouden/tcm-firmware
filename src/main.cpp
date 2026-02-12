@@ -30,15 +30,17 @@ bool debug_enabled = false;
 #define DEBUG_PRINT(x)                                                         \
   do {                                                                         \
     if (debug_enabled) {                                                       \
-      Serial.print("DEBUG: ");                                                 \
+      Serial.print("[");                                                       \
       Serial.print(x);                                                         \
+      Serial.print("]");                                                       \
     }                                                                          \
   } while (0)
 #define DEBUG_PRINTLN(x)                                                       \
   do {                                                                         \
     if (debug_enabled) {                                                       \
-      Serial.print("DEBUG: ");                                                 \
+      Serial.print("[");                                                       \
       Serial.println(x);                                                       \
+      Serial.print("]");                                                       \
     }                                                                          \
   } while (0)
 
