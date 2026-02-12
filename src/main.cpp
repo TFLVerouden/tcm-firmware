@@ -1082,9 +1082,22 @@ void loop() {
       DEBUG_PRINTLN(" µs");
 
     } else if (strncmp(command, "A", 1) == 0) {
-      // Command: A
-      // Toggle laser test mode and stream photodiode readings
-      if (!laserTestActive) {
+      // Command: A <0|1>
+      // Enable (1) or disable (0) laser test mode; no arg toggles.
+      bool enableLaser = !laserTestActive;
+      if (strlen(command) > 1) {
+        int enable = parseIntInString(command, 1);
+        if (enable == 0) {
+          enableLaser = false;
+        } else if (enable == 1) {
+          enableLaser = true;
+        } else {
+          printError("A expects 0 or 1");
+          return;
+        }
+      }
+
+      if (enableLaser && !laserTestActive) {
         if (detectingDroplet) {
           detectingDroplet = false;
           belowThreshold = false;
@@ -1095,7 +1108,7 @@ void loop() {
         setLedColor(COLOR_LASER);
         laserTestActive = true;
         laserTestLastPrint = 0;
-      } else {
+      } else if (!enableLaser && laserTestActive) {
         stopLaser();
         setLedColor(COLOR_IDLE);
         laserTestActive = false;
@@ -1125,7 +1138,7 @@ void loop() {
       DEBUG_PRINTLN("W?      - Read WAIT before run (µs)");
       DEBUG_PRINTLN("P <bar> - Set PRESSURE on tank (bar)");
       DEBUG_PRINTLN("P?      - Read PRESSURE");
-      DEBUG_PRINTLN("A       - Toggle LASER test mode");
+      DEBUG_PRINTLN("A <0|1> - LASER test mode off/on");
       DEBUG_PRINTLN("O       - OPEN solenoid valve");
       DEBUG_PRINTLN("C       - CLOSE solenoid valve (and stop any run)");
       DEBUG_PRINTLN("V <mA>  - Set proportional VALVE milliamps to <mA>");
