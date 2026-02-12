@@ -39,8 +39,8 @@ bool debug_enabled = false;
   do {                                                                         \
     if (debug_enabled) {                                                       \
       Serial.print("[");                                                       \
-      Serial.println(x);                                                       \
-      Serial.print("]");                                                       \
+      Serial.print(x);                                                         \
+      Serial.println("]");                                                     \
     }                                                                          \
   } while (0)
 
@@ -698,6 +698,50 @@ void resetDataArrays() {
   datasetDuration = 0;
 }
 
+void clearPersistentFiles() {
+  // Remove persisted state and dataset files from flash
+  if (fatfs.exists(STATE_FILE)) {
+    fatfs.remove(STATE_FILE);
+  }
+  if (fatfs.exists(DATASET_FILE)) {
+    fatfs.remove(DATASET_FILE);
+  }
+
+  // Remove any experiment CSV files from flash
+  const char *csvPrefix = "experiment_dataset_";
+  File root = fatfs.open("/");
+  if (root) {
+    File entry = root.openNextFile();
+    while (entry) {
+      if (!entry.isDirectory()) {
+        const char *name = entry.name();
+        size_t nameLen = strlen(name);
+        if (strncmp(name, csvPrefix, strlen(csvPrefix)) == 0 && nameLen >= 4 &&
+            strncmp(name + nameLen - 4, ".csv", 4) == 0) {
+          entry.close();
+          fatfs.remove(name);
+        } else {
+          entry.close();
+        }
+      } else {
+        entry.close();
+      }
+      entry = root.openNextFile();
+    }
+    root.close();
+  }
+
+  // Reset in-memory persistence tracking (do not alter live outputs)
+  pressureInitializedFromFlash = false;
+  waitInitializedFromFlash = false;
+  lastPressure_bar = 0.0f;
+  resetDataArrays();
+  runCounter = 0;
+  lastSessionCount = 0;
+  lastSavedFilename[0] = '\0';
+  currentCount = 0;
+}
+
 // ============================================================================
 // MAIN LOOP
 // ============================================================================
@@ -1138,6 +1182,12 @@ void loop() {
       }
       setLedColor(COLOR_VALVE_OPEN);
 
+    } else if (strncmp(command, "C!", 2) == 0) {
+      // Command: C!
+      // Clear persisted state/dataset files from flash
+      clearPersistentFiles();
+      Serial.println("PERSISTENCE_CLEARED");
+
     } else if (strncmp(command, "C", 1) == 0) {
       // Command: C
       // Manually close solenoid valve and stop any active run/detection
@@ -1256,6 +1306,7 @@ void loop() {
       DEBUG_PRINTLN("A <0|1> - LASER test mode off/on");
       DEBUG_PRINTLN("O       - OPEN solenoid valve");
       DEBUG_PRINTLN("C       - CLOSE solenoid valve (and stop any run)");
+      DEBUG_PRINTLN("C!      - CLEAR persisted state/dataset files");
       DEBUG_PRINTLN("V <mA>  - Set proportional VALVE milliamps to <mA>");
       DEBUG_PRINTLN("L <N_datapoints> <dataset duration (ms)> <csv dataset> "
                     "- LOAD dataset, format: "

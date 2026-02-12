@@ -23,6 +23,7 @@ Commands are ASCII lines terminated by newline (\n). Units are noted per command
 - `D <n>`: Droplet-detect `n` times then stop.
 - `O`: Open solenoid valve.
 - `C`: Close solenoid valve (and stop any run).
+- `C!`: Clear persisted state/dataset files and delete logged CSV files.
 - `A <0|1>`: Laser test mode off/on (streams photodiode readings when on).
 - `T?`: Read temperature & humidity.
 - `S?`: Show system status (debug output).
