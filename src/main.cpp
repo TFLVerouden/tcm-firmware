@@ -1110,6 +1110,7 @@ void loop() {
       DEBUG_PRINTLN("W <us>  - Set WAIT before run (µs)");
       DEBUG_PRINTLN("P <bar> - Set PRESSURE on tank (bar)");
       DEBUG_PRINTLN("P?      - Read PRESSURE");
+      DEBUG_PRINTLN("A       - Toggle LASER test mode");
       DEBUG_PRINTLN("O       - OPEN solenoid valve");
       DEBUG_PRINTLN("C       - CLOSE solenoid valve (and stop any run)");
       DEBUG_PRINTLN("V <mA>  - Set proportional VALVE milliamps to <mA>");
