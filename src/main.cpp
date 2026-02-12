@@ -103,8 +103,9 @@ LogEntry logs[MAX_RECORDS];
 int currentCount = 0;
 uint32_t runCounter = 0; // Per-session run index (starts at 0 each boot)
 char lastSavedFilename[32] = ""; // Latest file saved during this session
-float lastPressure_mA = 0.0f;    // Persisted pressure regulator setting [mA]
+float lastPressure_bar = 0.0f;   // Persisted pressure regulator setting [bar]
 bool pressureInitializedFromFlash = false; // Valid persisted pressure loaded
+bool waitInitializedFromFlash = false;     // Valid persisted wait loaded
 
 // ============================================================================
 // TIMING PARAMETERS
@@ -199,6 +200,11 @@ void recordEvent(int8_t v1, float v2, float press) {
   }
 }
 
+float pressureBarToCurrent(float bar) {
+  // Convert requested pressure [bar] to regulator current [mA]
+  return (bar + 2.48821429f) / 0.62242857f;
+}
+
 // ============================================================================
 // FUNCTION TO STORE DATA TO FLASH INSTEAD OF RAM
 // ============================================================================
@@ -216,13 +222,20 @@ void savePersistentState() {
 
   // Only persist pressure when it is known to be valid
   if (pressureInitializedFromFlash) {
-    file.printf("lastPressure_mA=%.2f\n", lastPressure_mA);
+    file.printf("lastPressure_bar=%.3f\n", lastPressure_bar);
+  }
+  if (waitInitializedFromFlash) {
+    file.printf("preTriggerDelay_us=%lu\n",
+                static_cast<unsigned long>(pre_trigger_delay_us));
   }
   file.close();
 }
 
 void loadPersistentState() {
   // Restore settings if the state file exists
+  pressureInitializedFromFlash = false;
+  waitInitializedFromFlash = false;
+  lastPressure_bar = 0.0f;
   if (!fatfs.exists(STATE_FILE)) {
     return;
   }
@@ -238,17 +251,38 @@ void loadPersistentState() {
     size_t len = file.readBytesUntil('\n', line, sizeof(line) - 1);
     line[len] = '\0';
 
-    // Parse known keys line-by-line
-    float floatValue = 0.0f;
-    if (sscanf(line, "lastPressure_mA=%f", &floatValue) == 1) {
-      lastPressure_mA = floatValue;
+    // Parse known keys line-by-line (avoid sscanf float parsing)
+    const char *pressureKey = "lastPressure_bar=";
+    if (strncmp(line, pressureKey, strlen(pressureKey)) == 0) {
+      const char *value = line + strlen(pressureKey);
+      lastPressure_bar = atof(value);
+      float current = pressureBarToCurrent(lastPressure_bar);
       // Validate range before applying
-      if (lastPressure_mA >= min_mA_pres_reg && lastPressure_mA <= max_mA) {
+      if (current >= min_mA_pres_reg && current <= max_mA) {
         pressureInitializedFromFlash = true;
       }
+      continue;
+    }
+
+    const char *waitKey = "preTriggerDelay_us=";
+    if (strncmp(line, waitKey, strlen(waitKey)) == 0) {
+      const char *value = line + strlen(waitKey);
+      unsigned long delayValue = strtoul(value, nullptr, 10);
+      pre_trigger_delay_us = static_cast<uint32_t>(delayValue);
+      waitInitializedFromFlash = true;
     }
   }
   file.close();
+}
+
+bool restorePressureFromFlash() {
+  loadPersistentState();
+  if (pressureInitializedFromFlash) {
+    float current = pressureBarToCurrent(lastPressure_bar);
+    pressure.set_mA(current);
+    return true;
+  }
+  return false;
 }
 
 void startRunSession() {
@@ -355,7 +389,6 @@ void setup() {
   valve.set_mA(default_valve);
 
   pressure.begin();
-  pressure.set_mA(default_pressure);
 
   // Initialize DotStar LED
   led.begin();
@@ -413,14 +446,13 @@ void setup() {
   }
   DEBUG_PRINTLN("Flash filesystem mounted successfully.");
 
-  loadPersistentState();
-  // Always reset run counters on boot; only pressure persists
+  // Reset run counters on boot; pressure persists
   runCounter = 0;
   lastSessionCount = 0;
   lastSavedFilename[0] = '\0';
-  if (pressureInitializedFromFlash) {
-    // Restore last pressure regulator setting if available
-    pressure.set_mA(lastPressure_mA);
+  if (!restorePressureFromFlash()) {
+    // Fall back to default only when no persisted value was loaded
+    pressure.set_mA(default_pressure);
   }
 }
 
@@ -820,7 +852,7 @@ void loop() {
 
       float bar =
           parseFloatInString(command, 1); // Parse float from char array command
-      float current = (bar + 2.48821429) / 0.62242857;
+      float current = pressureBarToCurrent(bar);
 
       // Handle out of allowable range inputs, defaults to specified value
       // TODO: Put calculation in function
@@ -831,7 +863,7 @@ void loop() {
       } else {
         // Apply pressure, store it, and persist to flash
         pressure.set_mA(current);
-        lastPressure_mA = current;
+        lastPressure_bar = bar;
         pressureInitializedFromFlash = true;
         savePersistentState();
         DEBUG_PRINT("Last set bitvalue of pressure regulator: ");
@@ -1063,6 +1095,8 @@ void loop() {
       // Command: W <delay_us>
       // Set delay between droplet detection and starting dataset execution
       pre_trigger_delay_us = parseIntInString(command, 1);
+      waitInitializedFromFlash = true;
+      savePersistentState();
       DEBUG_PRINT("Pre-trigger wait: ");
       DEBUG_PRINT(pre_trigger_delay_us);
       DEBUG_PRINTLN(" µs");
