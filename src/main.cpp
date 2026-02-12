@@ -792,15 +792,7 @@ void loop() {
 
       // Handle out of allowable range inputs, defaults to specified value
       if (!current || current < min_mA_valve || current > max_mA) {
-        valve.set_mA(default_valve);
-        DEBUG_PRINT("ERROR: input outside of allowable range (");
-        DEBUG_PRINT(min_mA_valve);
-        DEBUG_PRINT(" - ");
-        DEBUG_PRINT(max_mA);
-        DEBUG_PRINTLN("), valve set to default value.");
-        setLedColor(COLOR_ERROR);
-        delay(300);
-        setLedColor(COLOR_OFF);
+        printError("Valve mA input out of range!");
 
         // Set T_Click to input mA
       } else {
@@ -833,15 +825,7 @@ void loop() {
       // Handle out of allowable range inputs, defaults to specified value
       // TODO: Put calculation in function
       if (!current || current < min_mA_pres_reg || current > max_mA) {
-        pressure.set_mA(default_pressure);
-        DEBUG_PRINT("ERROR: input outside of allowable range (");
-        DEBUG_PRINT(min_mA_pres_reg);
-        DEBUG_PRINT(" - ");
-        DEBUG_PRINT(max_mA);
-        DEBUG_PRINTLN(" mA), valve set to default value.");
-        setLedColor(COLOR_ERROR);
-        delay(300);
-        setLedColor(COLOR_OFF);
+        printError("Pressure input out of range!");
 
         // Set T_Click to input mA
       } else {
