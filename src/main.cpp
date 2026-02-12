@@ -714,12 +714,16 @@ void clearPersistentFiles() {
     File entry = root.openNextFile();
     while (entry) {
       if (!entry.isDirectory()) {
-        const char *name = entry.name();
-        size_t nameLen = strlen(name);
-        if (strncmp(name, csvPrefix, strlen(csvPrefix)) == 0 && nameLen >= 4 &&
-            strncmp(name + nameLen - 4, ".csv", 4) == 0) {
-          entry.close();
-          fatfs.remove(name);
+        char name[64];
+        if (entry.getName(name, sizeof(name))) {
+          size_t nameLen = strlen(name);
+          if (strncmp(name, csvPrefix, strlen(csvPrefix)) == 0 &&
+              nameLen >= 4 && strncmp(name + nameLen - 4, ".csv", 4) == 0) {
+            entry.close();
+            fatfs.remove(name);
+          } else {
+            entry.close();
+          }
         } else {
           entry.close();
         }
