@@ -129,6 +129,7 @@ uint32_t runCallTime = 0; // Time elapsed since "RUN" command [µs]
 // Session tracking for saved files
 uint32_t lastSessionCount = 0;
 const char *STATE_FILE = "run_state.txt"; // Stores persistent settings
+const char *DATASET_FILE = "dataset_state.bin"; // Stores last loaded dataset
 
 // ============================================================================
 // SENSOR CONFIGURATION
@@ -274,6 +275,103 @@ void loadPersistentState() {
     }
   }
   file.close();
+}
+
+// ============================================================================
+// DATASET PERSISTENCE (FLASH)
+// ============================================================================
+struct __attribute__((__packed__)) DatasetHeader {
+  uint32_t count;
+  uint32_t duration_ms;
+};
+
+struct __attribute__((__packed__)) DatasetRow {
+  uint32_t time_ms;
+  float value_mA;
+  uint8_t enable;
+};
+
+bool saveDatasetToFlash() {
+  if (dataIndex <= 0) {
+    return false;
+  }
+
+  if (fatfs.exists(DATASET_FILE)) {
+    fatfs.remove(DATASET_FILE);
+  }
+
+  File file = fatfs.open(DATASET_FILE, FILE_WRITE);
+  if (!file) {
+    printError("Error opening dataset file for writing!");
+    return false;
+  }
+
+  DatasetHeader header{static_cast<uint32_t>(dataIndex),
+                       static_cast<uint32_t>(datasetDuration)};
+  if (file.write(reinterpret_cast<const uint8_t *>(&header), sizeof(header)) !=
+      sizeof(header)) {
+    printError("Error writing dataset header!");
+    file.close();
+    return false;
+  }
+
+  for (int i = 0; i < dataIndex; i++) {
+    DatasetRow row{time_array[i], value_array[i], sol_enable_array[i]};
+    if (file.write(reinterpret_cast<const uint8_t *>(&row), sizeof(row)) !=
+        sizeof(row)) {
+      printError("Error writing dataset row!");
+      file.close();
+      return false;
+    }
+  }
+
+  file.close();
+  return true;
+}
+
+bool loadDatasetFromFlash() {
+  if (!fatfs.exists(DATASET_FILE)) {
+    return false;
+  }
+
+  File file = fatfs.open(DATASET_FILE, FILE_READ);
+  if (!file) {
+    printError("Error opening dataset file for reading!");
+    return false;
+  }
+
+  DatasetHeader header{};
+  if (file.read(reinterpret_cast<uint8_t *>(&header), sizeof(header)) !=
+      sizeof(header)) {
+    printError("Error reading dataset header!");
+    file.close();
+    return false;
+  }
+
+  if (header.count == 0 || header.count > MAX_DATA_LENGTH) {
+    printError("Dataset header invalid!");
+    file.close();
+    return false;
+  }
+
+  for (uint32_t i = 0; i < header.count; i++) {
+    DatasetRow row{};
+    if (file.read(reinterpret_cast<uint8_t *>(&row), sizeof(row)) !=
+        sizeof(row)) {
+      printError("Error reading dataset row!");
+      file.close();
+      return false;
+    }
+    time_array[i] = row.time_ms;
+    value_array[i] = row.value_mA;
+    sol_enable_array[i] = row.enable;
+  }
+
+  incomingCount = static_cast<int>(header.count);
+  dataIndex = static_cast<int>(header.count);
+  datasetDuration = static_cast<int>(header.duration_ms);
+  file.close();
+  return true;
 }
 
 bool restorePressureFromFlash() {
@@ -446,6 +544,10 @@ void setup() {
   if (!restorePressureFromFlash()) {
     // Fall back to default only when no persisted value was loaded
     pressure.set_mA(default_pressure);
+  }
+  // Restore last loaded dataset if available
+  if (!loadDatasetFromFlash()) {
+    resetDataArrays();
   }
 }
 
@@ -987,6 +1089,10 @@ void loop() {
       }
 
       Serial.println("DATASET_RECEIVED");
+
+      if (!saveDatasetToFlash()) {
+        DEBUG_PRINTLN("Failed to persist dataset to flash!");
+      }
 
       // LED color off when whole dataset is received
       setLedColor(COLOR_OFF);
