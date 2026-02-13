@@ -162,7 +162,7 @@ T_Click pressure(PIN_PRES_REG, RT_Click_Calibration{3.97, 19.90, 796, 3982});
 // Define default T Click values
 const float max_mA = 20.0;
 const float min_mA_valve = 12.0;
-const float min_mA_pres_reg = 4.0;
+const float min_mA_pres_reg = 3.9;
 const float default_valve = 12.0;   // mA
 const float default_pressure = 4.0; // mA
 
@@ -565,8 +565,8 @@ void openSolValve() {
       (1 << g_APinDescription[PIN_VALVE].ulPin);
 
   recordEvent(1, -1,
-              0.62350602 * R_click.get_EMA_mA() -
-                  2.51344790); // Log valve open event
+              0.6151645155919202 * R_click.get_EMA_mA() -
+                  2.5128908254187095); // Log valve open event
 }
 
 void trigOut() {
@@ -583,8 +583,8 @@ void closeSolValve() {
       (1 << g_APinDescription[PIN_VALVE].ulPin);
 
   recordEvent(0, -1,
-              0.62350602 * R_click.get_EMA_mA() -
-                  2.51344790); // Log valve close event
+              0.6151645155919202 * R_click.get_EMA_mA() -
+                  2.5128908254187095); // Log valve close event
 
   DEBUG_PRINTLN("SOLENOID_VALVE_CLOSED"); // Valve closed confirmation (debug
                                           // only for speed)
@@ -648,12 +648,15 @@ void readPressure(bool valveOpen) {
   // where I is the 4-20mA current output
   setLedColor(COLOR_READING); // Show color during reading
   Serial.print("P");
-  Serial.println(0.62350602 * R_click.get_EMA_mA() - 2.51344790);
+  Serial.println(0.6151645155919202 * R_click.get_EMA_mA() -
+                 2.5128908254187095);
 
   // Restore LED color based on valve state
   setLedColor(valveOpen ? COLOR_VALVE_OPEN : COLOR_IDLE);
   DEBUG_PRINT("R Click bitvalue: ");
   DEBUG_PRINTLN(R_click.get_EMA_bitval());
+  DEBUG_PRINT("R Click mA: ");
+  DEBUG_PRINTLN(R_click.get_EMA_mA());
 }
 
 void readTemperatureHumidity(bool valveOpen) {
@@ -912,7 +915,8 @@ void loop() {
       // Proportional valve follows mA column regardless of solenoid enable
       valve.set_mA(value_array[sequenceIndex]);
       recordEvent(-1, value_array[sequenceIndex],
-                  0.62350602 * R_click.get_EMA_mA() - 2.51344790);
+                  0.6151645155919202 * R_click.get_EMA_mA() -
+                      2.5128908254187095);
 
       // Solenoid enable controls solenoid and trigger
       if (enable && !solValveOpen) {
@@ -1352,7 +1356,8 @@ void loop() {
       DEBUG_PRINT("Pressure (raw): ");
       DEBUG_PRINT(R_click.get_EMA_mA());
       DEBUG_PRINT("Pressure (bar): ");
-      DEBUG_PRINTLN(0.62350602 * R_click.get_EMA_mA() - 2.51344790);
+      DEBUG_PRINTLN(0.6151645155919202 * R_click.get_EMA_mA() -
+                    2.5128908254187095);
       DEBUG_PRINTLN(" mA");
       DEBUG_PRINT("Uptime: ");
       DEBUG_PRINT(millis() / 1000);
