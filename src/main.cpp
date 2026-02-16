@@ -968,9 +968,6 @@ void loop() {
     char *command =
         sc.getCommand(); // Pointer to memory location of serial buffer contents
 
-    DEBUG_PRINT("CMD: ");
-    DEBUG_PRINTLN(command);
-
     if (strncmp(command, "B", 1) == 0) {
       // Command: B <0|1>
       // Enable (1) or disable (0) debug output
