@@ -667,10 +667,10 @@ void readTemperatureHumidity(bool valveOpen) {
 
   // Send temperature reading
   Serial.print("T");
-  Serial.println(temp.temperature);
+  Serial.print(temp.temperature);
 
   // Send humidity reading
-  Serial.print("H");
+  Serial.print(" H");
   Serial.println(humidity.relative_humidity);
 
   // Restore LED color based on valve state
