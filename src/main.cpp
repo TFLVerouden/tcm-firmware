@@ -968,13 +968,94 @@ void loop() {
     char *command =
         sc.getCommand(); // Pointer to memory location of serial buffer contents
 
-    if (strncmp(command, "B", 1) == 0) {
+    // ---------------------------------------------------------------------
+    // Connection & debugging
+    // ---------------------------------------------------------------------
+    if (strncmp(command, "id?", 3) == 0) {
+      // Command: id?
+      // Return device ID for dvg-devices Arduino validation
+      Serial.println("TCM_control");
+
+    } else if (strncmp(command, "B", 1) == 0) {
       // Command: B <0|1>
       // Enable (1) or disable (0) debug output
       int enable = parseIntInString(command, 1);
       debug_enabled = (enable == 1);
       Serial.println(debug_enabled ? "DEBUG_ON" : "DEBUG_OFF");
 
+    } else if (strncmp(command, "S?", 2) == 0) {
+      // Command: S?
+      // Print system status (debug only)
+      DEBUG_PRINTLN("\n=== System Status ===");
+      DEBUG_PRINT("Solenoid valve: ");
+      DEBUG_PRINTLN(solValveOpen ? "OPEN" : "CLOSED");
+      DEBUG_PRINT("Dataset in memory: ");
+      DEBUG_PRINTLN((dataIndex == 0) ? "FALSE" : "TRUE");
+      DEBUG_PRINT("Executing dataset: ");
+      DEBUG_PRINTLN(isExecuting ? "TRUE" : "FALSE");
+      DEBUG_PRINT("Trigger: ");
+      DEBUG_PRINTLN(performingTrigger ? "ACTIVE" : "IDLE");
+      DEBUG_PRINT("Droplet detection: ");
+      DEBUG_PRINTLN(detectingDroplet ? "ACTIVE" : "IDLE");
+      if (detectingDroplet) {
+        DEBUG_PRINT("Photodetector: ");
+        DEBUG_PRINT(readPhotodetector());
+        DEBUG_PRINTLN(" V");
+      }
+      DEBUG_PRINT("Wait before RUN: ");
+      DEBUG_PRINT(pre_trigger_delay_us);
+      DEBUG_PRINTLN(" µs");
+      DEBUG_PRINT("Photodiode detection delay: ");
+      DEBUG_PRINT(pda_delay);
+      DEBUG_PRINTLN(" µs");
+      DEBUG_PRINT("Droplet runs remaining: ");
+      DEBUG_PRINTLN(dropletRunsRemaining);
+      DEBUG_PRINT("Pressure (raw): ");
+      DEBUG_PRINT(R_click.get_EMA_mA());
+      DEBUG_PRINT("Pressure (bar): ");
+      DEBUG_PRINTLN(0.6151645155919202 * R_click.get_EMA_mA() -
+                    2.5128908254187095);
+      DEBUG_PRINTLN(" mA");
+      DEBUG_PRINT("Uptime: ");
+      DEBUG_PRINT(millis() / 1000);
+      DEBUG_PRINTLN(" s");
+
+    } else if (strncmp(command, "?", 1) == 0) {
+      // Command: ?
+      // Print help menu
+      DEBUG_PRINTLN("\n=== Available Commands ===");
+      DEBUG_PRINTLN("[Connection & Debugging]");
+      DEBUG_PRINTLN("id?     - Show device ID for auto serial connection");
+      DEBUG_PRINTLN("B <0|1> - Toggle debug output");
+      DEBUG_PRINTLN("S?      - Show system status (debug only)");
+      DEBUG_PRINTLN("?       - Show the on-device help menu");
+      DEBUG_PRINTLN("[Control Hardware]");
+      DEBUG_PRINTLN("V <mA>  - Set proportional valve current in mA");
+      DEBUG_PRINTLN("P <bar> - Set pressure regulator in bar");
+      DEBUG_PRINTLN("O       - Open solenoid valve");
+      DEBUG_PRINTLN("C       - Close solenoid valve (and stop any run)");
+      DEBUG_PRINTLN("A <0|1> - Laser test mode off/on (streams photodiode "
+            "readings when on)");
+      DEBUG_PRINTLN("[Read Out Sensors]");
+      DEBUG_PRINTLN("P?      - Read current pressure (bar)");
+      DEBUG_PRINTLN("T?      - Read temperature & humidity");
+      DEBUG_PRINTLN("[Configuration]");
+      DEBUG_PRINTLN("W <us>  - Set wait before run in microseconds");
+      DEBUG_PRINTLN("W?      - Read current wait before run in microseconds");
+      DEBUG_PRINTLN("C!      - Clear persisted state/dataset files and delete "
+            "logged CSV files");
+      DEBUG_PRINTLN("[Dataset Handling]");
+      DEBUG_PRINTLN("L <N> <duration_ms> <csv> - Load dataset. CSV format: "
+            "<ms0>,<mA0>,<e0>,<ms1>,<mA1>,<e1>,...,<msN>,<mAN>,<eN>");
+      DEBUG_PRINTLN("L?      - Show loaded dataset status");
+      DEBUG_PRINTLN("[Cough]");
+      DEBUG_PRINTLN("R       - Run the loaded dataset");
+      DEBUG_PRINTLN("D       - Droplet-detect then run dataset once");
+      DEBUG_PRINTLN("D <n>   - Droplet-detect n times then stop");
+
+      // ---------------------------------------------------------------------
+      // Control hardware
+      // ---------------------------------------------------------------------
     } else if (strncmp(command, "V", 1) == 0) {
       // Command: V <mA>
       // Set milli amps of proportional valve to <mA>
@@ -995,15 +1076,7 @@ void loop() {
         Serial.println(current, 2);
       }
 
-      // ---------------------------------------------------------------------
-      // Pressure regulator: P? (read) or P <bar> (set)
-      // ---------------------------------------------------------------------
-    } else if (strncmp(command, "P?", 2) == 0) {
-      // Command: P?
-      // Read and return current pressure
-      readPressure(solValveOpen);
-
-    } else if (strncmp(command, "P", 1) == 0) {
+    } else if (strncmp(command, "P", 1) == 0 && strncmp(command, "P?", 2) != 0) {
       // Command: P <bar>
       // Set pressure regulator to <bar>
 
@@ -1033,22 +1106,118 @@ void loop() {
         Serial.println(lastPressure_bar, 2);
       }
 
-      // ---------------------------------------------------------------------
-      // Dataset: L? / L / R / F
-      // ---------------------------------------------------------------------
-    } else if (strncmp(command, "L?", 2) == 0) {
+    } else if (strncmp(command, "O", 1) == 0) {
+      // Command: O
+      // Manually open solenoid valve
+      if (!solValveOpen) {
+        openSolValve();
+        solValveOpen = true;
+      }
+      setLedColor(COLOR_VALVE_OPEN);
+      Serial.println("SOLENOID_OPENED");
 
-      if (dataIndex == 0) {
-        Serial.println("NO_DATASET");
-      } else {
-        Serial.print("DATASET: ");
-        Serial.print(incomingCount);
-        Serial.print(" LINES AND ");
-        Serial.print(datasetDuration);
-        Serial.println(" MS");
+    } else if (strncmp(command, "C", 1) == 0 && strncmp(command, "C!", 2) != 0) {
+      // Command: C
+      // Manually close solenoid valve and stop any active run/detection
+      if (solValveOpen) {
+        closeSolValve();
+        solValveOpen = false;
+      }
+      valve.set_mA(default_valve);
+      if (isExecuting) {
+        isExecuting = false;
+        sequenceIndex = 0;
+      }
+      if (detectingDroplet) {
+        stopLaser();
+        detectingDroplet = false;
+      }
+      delayedRunPending = false;
+      dropletRunsRemaining = 0;
+      setLedColor(COLOR_IDLE);
+      Serial.println("SOLENOID_CLOSED");
+
+    } else if (strncmp(command, "A", 1) == 0) {
+      // Command: A <0|1>
+      // Enable (1) or disable (0) laser test mode; no arg toggles.
+      bool enableLaser = !laserTestActive;
+      if (strlen(command) > 1) {
+        int enable = parseIntInString(command, 1);
+        if (enable == 0) {
+          enableLaser = false;
+        } else if (enable == 1) {
+          enableLaser = true;
+        } else {
+          printError("A expects 0 or 1");
+          return;
+        }
       }
 
-    } else if (strncmp(command, "L", 1) == 0) {
+      if (enableLaser && !laserTestActive) {
+        if (detectingDroplet) {
+          detectingDroplet = false;
+          belowThreshold = false;
+          delayedRunPending = false;
+        }
+        dropletRunsRemaining = 0;
+        startLaser();
+        setLedColor(COLOR_LASER);
+        laserTestActive = true;
+        laserTestLastPrint = 0;
+        Serial.println("LASER_TEST_ON");
+      } else if (!enableLaser && laserTestActive) {
+        stopLaser();
+        setLedColor(COLOR_IDLE);
+        laserTestActive = false;
+        Serial.println("LASER_TEST_OFF");
+      } else {
+        Serial.println(laserTestActive ? "LASER_TEST_ON" : "LASER_TEST_OFF");
+      }
+
+      // ---------------------------------------------------------------------
+      // Read out sensors
+      // ---------------------------------------------------------------------
+    } else if (strncmp(command, "P?", 2) == 0) {
+      // Command: P?
+      // Read and return current pressure
+      readPressure(solValveOpen);
+
+    } else if (strncmp(command, "T?", 2) == 0) {
+      // Command: T?
+      // Read and return temperature & humidity
+      readTemperatureHumidity(solValveOpen);
+
+      // ---------------------------------------------------------------------
+      // Configuration
+      // ---------------------------------------------------------------------
+    } else if (strncmp(command, "W", 1) == 0 && strncmp(command, "W?", 2) != 0) {
+      // Command: W <delay_us>
+      // Set delay between droplet detection and starting dataset execution
+      pre_trigger_delay_us = parseIntInString(command, 1);
+      waitInitializedFromFlash = true;
+      savePersistentState();
+      DEBUG_PRINT("Pre-trigger wait: ");
+      DEBUG_PRINT(pre_trigger_delay_us);
+      DEBUG_PRINTLN(" µs");
+      Serial.print("SET_WAIT ");
+      Serial.println(pre_trigger_delay_us);
+
+    } else if (strncmp(command, "W?", 2) == 0) {
+      // Command: W?
+      // Read and return current pre-trigger wait time
+      Serial.print("W");
+      Serial.println(pre_trigger_delay_us);
+
+    } else if (strncmp(command, "C!", 2) == 0) {
+      // Command: C!
+      // Clear persisted state/dataset files from flash
+      clearPersistentFiles();
+      Serial.println("MEMORY_CLEARED");
+
+      // ---------------------------------------------------------------------
+      // Dataset handling
+      // ---------------------------------------------------------------------
+    } else if (strncmp(command, "L", 1) == 0 && strncmp(command, "L?", 2) != 0) {
       // Parse incomming dataset. Command: "L <N_datapoints>
       // <Time0>,<mA0>,<E0>,<Time1>,<mA1>,<E1>,...,<TimeN>,<mAN>,<EN>"
       // where E is 0/1 solenoid enable.
@@ -1155,6 +1324,21 @@ void loop() {
       // LED color off when whole dataset is received
       setLedColor(COLOR_OFF);
 
+    } else if (strncmp(command, "L?", 2) == 0) {
+
+      if (dataIndex == 0) {
+        Serial.println("NO_DATASET");
+      } else {
+        Serial.print("DATASET: ");
+        Serial.print(incomingCount);
+        Serial.print(" LINES AND ");
+        Serial.print(datasetDuration);
+        Serial.println(" MS");
+      }
+
+      // ---------------------------------------------------------------------
+      // Cough
+      // ---------------------------------------------------------------------
     } else if (strncmp(command, "R", 1) == 0) {
       // Start a single run using the loaded dataset
       if (dataIndex == 0) {
@@ -1181,46 +1365,6 @@ void loop() {
         }
       }
 
-      // ---------------------------------------------------------------------
-      // Solenoid and droplet detection: O / C / D / W
-      // ---------------------------------------------------------------------
-    } else if (strncmp(command, "O", 1) == 0) {
-      // Command: O
-      // Manually open solenoid valve
-      if (!solValveOpen) {
-        openSolValve();
-        solValveOpen = true;
-      }
-      setLedColor(COLOR_VALVE_OPEN);
-      Serial.println("SOLENOID_OPENED");
-
-    } else if (strncmp(command, "C!", 2) == 0) {
-      // Command: C!
-      // Clear persisted state/dataset files from flash
-      clearPersistentFiles();
-      Serial.println("MEMORY_CLEARED");
-
-    } else if (strncmp(command, "C", 1) == 0) {
-      // Command: C
-      // Manually close solenoid valve and stop any active run/detection
-      if (solValveOpen) {
-        closeSolValve();
-        solValveOpen = false;
-      }
-      valve.set_mA(default_valve);
-      if (isExecuting) {
-        isExecuting = false;
-        sequenceIndex = 0;
-      }
-      if (detectingDroplet) {
-        stopLaser();
-        detectingDroplet = false;
-      }
-      delayedRunPending = false;
-      dropletRunsRemaining = 0;
-      setLedColor(COLOR_IDLE);
-      Serial.println("SOLENOID_CLOSED");
-
     } else if (strncmp(command, "D", 1) == 0) {
       // Command: D
       // Arm droplet detection; upon droplet detection wait W delay and run
@@ -1244,137 +1388,6 @@ void loop() {
       } else {
         Serial.println("DROPLET_ARMED");
       }
-
-    } else if (strncmp(command, "W?", 2) == 0) {
-      // Command: W?
-      // Read and return current pre-trigger wait time
-      Serial.print("W");
-      Serial.println(pre_trigger_delay_us);
-
-    } else if (strncmp(command, "W", 1) == 0) {
-      // Command: W <delay_us>
-      // Set delay between droplet detection and starting dataset execution
-      pre_trigger_delay_us = parseIntInString(command, 1);
-      waitInitializedFromFlash = true;
-      savePersistentState();
-      DEBUG_PRINT("Pre-trigger wait: ");
-      DEBUG_PRINT(pre_trigger_delay_us);
-      DEBUG_PRINTLN(" µs");
-      Serial.print("SET_WAIT ");
-      Serial.println(pre_trigger_delay_us);
-
-    } else if (strncmp(command, "A", 1) == 0) {
-      // Command: A <0|1>
-      // Enable (1) or disable (0) laser test mode; no arg toggles.
-      bool enableLaser = !laserTestActive;
-      if (strlen(command) > 1) {
-        int enable = parseIntInString(command, 1);
-        if (enable == 0) {
-          enableLaser = false;
-        } else if (enable == 1) {
-          enableLaser = true;
-        } else {
-          printError("A expects 0 or 1");
-          return;
-        }
-      }
-
-      if (enableLaser && !laserTestActive) {
-        if (detectingDroplet) {
-          detectingDroplet = false;
-          belowThreshold = false;
-          delayedRunPending = false;
-        }
-        dropletRunsRemaining = 0;
-        startLaser();
-        setLedColor(COLOR_LASER);
-        laserTestActive = true;
-        laserTestLastPrint = 0;
-        Serial.println("LASER_TEST_ON");
-      } else if (!enableLaser && laserTestActive) {
-        stopLaser();
-        setLedColor(COLOR_IDLE);
-        laserTestActive = false;
-        Serial.println("LASER_TEST_OFF");
-      } else {
-        Serial.println(laserTestActive ? "LASER_TEST_ON" : "LASER_TEST_OFF");
-      }
-
-      // ---------------------------------------------------------------------
-      // Sensors: T? / S?
-      // ---------------------------------------------------------------------
-    } else if (strncmp(command, "T?", 2) == 0) {
-      // Command: T?
-      // Read and return temperature & humidity
-      readTemperatureHumidity(solValveOpen);
-
-    } else if (strncmp(command, "id?", 3) == 0) {
-      // Command: id?
-      // Return device ID for dvg-devices Arduino validation
-      Serial.println("TCM_control");
-
-    } else if (strncmp(command, "?", 1) == 0) {
-      // Command: ?
-      // Print help menu
-      DEBUG_PRINTLN("\n=== Available Commands ===");
-      DEBUG_PRINTLN("R       - RUN loaded dataset");
-      DEBUG_PRINTLN("D       - DROPLET-detect then run dataset");
-      DEBUG_PRINTLN("D <n>   - DROPLET-detect n times then stop");
-      DEBUG_PRINTLN("W <us>  - Set WAIT before run (µs)");
-      DEBUG_PRINTLN("W?      - Read WAIT before run (µs)");
-      DEBUG_PRINTLN("P <bar> - Set PRESSURE on tank (bar)");
-      DEBUG_PRINTLN("P?      - Read PRESSURE");
-      DEBUG_PRINTLN("A <0|1> - LASER test mode off/on");
-      DEBUG_PRINTLN("O       - OPEN solenoid valve");
-      DEBUG_PRINTLN("C       - CLOSE solenoid valve (and stop any run)");
-      DEBUG_PRINTLN("C!      - CLEAR persisted state/dataset files");
-      DEBUG_PRINTLN("V <mA>  - Set proportional VALVE milliamps to <mA>");
-      DEBUG_PRINTLN("L <N_datapoints> <dataset duration (ms)> <csv dataset> "
-                    "- LOAD dataset, format: "
-                    "<ms0>,<mA0>,<e0>,<ms1>,<mA1>,<e1>,...,<msN>,<mAN>,<eN>");
-      DEBUG_PRINTLN("L?      - Show LOADED dataset status");
-      DEBUG_PRINTLN("T?      - Read TEMPERATURE & humidity");
-      DEBUG_PRINTLN("S?      - System STATUS");
-      DEBUG_PRINTLN("B <0|1> - DeBUG output off/on");
-      DEBUG_PRINTLN("id?     - Show device ID for auto serial connection");
-      DEBUG_PRINTLN("?       - Show this help?");
-
-    } else if (strncmp(command, "S?", 2) == 0) {
-      // Command: S?
-      // Print system status (debug only)
-      DEBUG_PRINTLN("\n=== System Status ===");
-      DEBUG_PRINT("Solenoid valve: ");
-      DEBUG_PRINTLN(solValveOpen ? "OPEN" : "CLOSED");
-      DEBUG_PRINT("Dataset in memory: ");
-      DEBUG_PRINTLN((dataIndex == 0) ? "FALSE" : "TRUE");
-      DEBUG_PRINT("Executing dataset: ");
-      DEBUG_PRINTLN(isExecuting ? "TRUE" : "FALSE");
-      DEBUG_PRINT("Trigger: ");
-      DEBUG_PRINTLN(performingTrigger ? "ACTIVE" : "IDLE");
-      DEBUG_PRINT("Droplet detection: ");
-      DEBUG_PRINTLN(detectingDroplet ? "ACTIVE" : "IDLE");
-      if (detectingDroplet) {
-        DEBUG_PRINT("Photodetector: ");
-        DEBUG_PRINT(readPhotodetector());
-        DEBUG_PRINTLN(" V");
-      }
-      DEBUG_PRINT("Wait before RUN: ");
-      DEBUG_PRINT(pre_trigger_delay_us);
-      DEBUG_PRINTLN(" µs");
-      DEBUG_PRINT("Photodiode detection delay: ");
-      DEBUG_PRINT(pda_delay);
-      DEBUG_PRINTLN(" µs");
-      DEBUG_PRINT("Droplet runs remaining: ");
-      DEBUG_PRINTLN(dropletRunsRemaining);
-      DEBUG_PRINT("Pressure (raw): ");
-      DEBUG_PRINT(R_click.get_EMA_mA());
-      DEBUG_PRINT("Pressure (bar): ");
-      DEBUG_PRINTLN(0.6151645155919202 * R_click.get_EMA_mA() -
-                    2.5128908254187095);
-      DEBUG_PRINTLN(" mA");
-      DEBUG_PRINT("Uptime: ");
-      DEBUG_PRINT(millis() / 1000);
-      DEBUG_PRINTLN(" s");
 
     } else {
       // Unknown command

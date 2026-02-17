@@ -10,25 +10,42 @@ This is a PlatformIO project. Open the project in VS Code with PlatformIO instal
 
 Commands are ASCII lines terminated by newline (\n). Units are noted per command.
 
+### Connection & Debugging
+
+- `id?`: Show device ID for auto serial connection. Replies `TCM_control`.
 - `B <0|1>`: Toggle debug output. Replies `DEBUG_ON` or `DEBUG_OFF`.
+- `S?`: Show system status (debug only). Replies a block delimited by `STATUS_BEGIN` and `STATUS_END`.
+- `?`: Show the on-device help menu.
+
+### Control Hardware
+
 - `V <mA>`: Set proportional valve current in mA. Replies `SET_VALVE <mA>`.
 - `P <bar>`: Set pressure regulator in bar. Replies `SET_PRESSURE <bar>`.
+- `O`: Open solenoid valve. Replies `SOLENOID_OPENED`.
+- `C`: Close solenoid valve (and stop any run). Replies `SOLENOID_CLOSED`.
+- `A <0|1>`: Laser test mode off/on (streams photodiode readings when on). Replies `LASER_TEST_ON` or `LASER_TEST_OFF`.
+
+### Read Out Sensors
+
 - `P?`: Read current pressure (bar). Replies `P<bar>`.
+- `T?`: Read temperature & humidity. Replies `T<degC> H<%RH>`.
+
+### Configuration
+
 - `W <us>`: Set wait before run in microseconds. Replies `SET_WAIT <us>`.
 - `W?`: Read current wait before run in microseconds. Replies `W<us>`.
+- `C!`: Clear persisted state/dataset files and delete logged CSV files. Replies `MEMORY_CLEARED`.
+
+### Dataset Handling
+
 - `L <N> <duration_ms> <csv>`: Load dataset. CSV format: `<ms0>,<mA0>,<e0>,<ms1>,<mA1>,<e1>,...,<msN>,<mAN>,<eN>`. Replies `DATASET_RECEIVED` and `DATASET_SAVED`.
 - `L?`: Show loaded dataset status. Replies `NO_DATASET` or `DATASET: <lines> LINES AND <duration_ms> MS`.
+
+### Cough
+
 - `R`: Run the loaded dataset. Replies `STARTING_RUN` (immediate run). Later replies `EXECUTING_DATASET`, `FINISHED`, and file transfer markers when logs are streamed.
 - `D`: Droplet-detect then run dataset once. Replies `DROPLET_ARMED` on success.
 - `D <n>`: Droplet-detect `n` times then stop. Replies `DROPLET_ARMED` on success.
-- `O`: Open solenoid valve. Replies `SOLENOID_OPENED`.
-- `C`: Close solenoid valve (and stop any run). Replies `SOLENOID_CLOSED`.
-- `C!`: Clear persisted state/dataset files and delete logged CSV files. Replies `MEMORY_CLEARED`.
-- `A <0|1>`: Laser test mode off/on (streams photodiode readings when on). Replies `LASER_TEST_ON` or `LASER_TEST_OFF`.
-- `T?`: Read temperature & humidity. Replies `T<degC> H<%RH>`.
-- `S?`: Show system status. Replies a block delimited by `STATUS_BEGIN` and `STATUS_END`.
-- `id?`: Show device ID for auto serial connection. Replies `TCM_control`.
-- `?`: Show the on-device help menu.
 
 ## Files
 
