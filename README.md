@@ -44,7 +44,7 @@ Commands are ASCII lines terminated by newline (\n). Units are noted per command
 
 ### Cough
 
-- `R`: Run the loaded dataset. Replies `STARTING_RUN` (immediate run). Later replies `EXECUTING_DATASET`, `FINISHED`, and file transfer markers when logs are streamed.
+- `R`: Run the loaded dataset. Replies `STARTING_RUN` (immediate run). Later replies `STARTING_RUN`, `FINISHED`, and file transfer markers when logs are streamed.
 - `D`: Droplet-detect then run dataset once. Replies `DROPLET_ARMED` on success.
 - `D <n>`: Droplet-detect `n` times then stop. Replies `DROPLET_ARMED` on success.
 
@@ -57,21 +57,27 @@ Commands are ASCII lines terminated by newline (\n). Units are noted per command
 
 Run logs can be stored in QSPI flash. Serial output can be captured to the [logs](logs/) folder. When logs are streamed, output is wrapped by `START_OF_FILE <filename>` and `END_OF_FILE` markers.
 
+In the file header, the run number (only relevant when doing multi-droplet runs) and the trigger time (in us) are output. The body contains four columns:
+1. Time stamp (us)
+2. Solenoid valve action (0 if closed at that time stamp, 1 if opened at that time stamp, -1 if unchanged at that time stamp)
+3. Proportional valve current (mA, in range 12-20, or -1 if unchanged at that time stamp)
+4. Pressure sensor readout (bar)
+
 Example run output:
 
 ```text
-EXECUTING_DATASET
+STARTING_RUN
 FINISHED
 SAVED_TO_FLASH
 START_OF_FILE experiment_dataset_0001.csv
-Run,1
-Trigger T0 (us),500352036
-us,v1 action,v2 set mA,bar
-500352004,-1,0.00,1.01
-500352032,-1,12.00,1.01
-500352036,1,-1.00,1.01
-500357903,-1,20.00,1.00
-500557902,-1,12.00,0.93
-500557906,0,-1.00,0.93
+run_nr,1
+trigger_t0_us,149580895
+time_us,sol_valve_action,prop_valve_ma,press_bar
+149580861,-1,0.00,1.49
+149580890,-1,12.00,1.49
+149580894,1,-1.00,1.49
+149586728,-1,20.00,1.49
+149786723,-1,12.00,1.38
+149786727,0,-1.00,1.38
 END_OF_FILE
 ```

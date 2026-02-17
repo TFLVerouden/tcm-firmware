@@ -420,8 +420,8 @@ void saveToFlash() {
 
   if (file) {
     // Add run metadata and logged data rows
-    file.printf("Run,%lu\n", static_cast<unsigned long>(runCounter));
-    file.printf("Trigger T0 (us),%lu\n", tick);
+    file.printf("run_nr,%lu\n", static_cast<unsigned long>(runCounter));
+    file.printf("trigger_t0_us,%lu\n", tick);
     // file.println("us,v1 action,v2 set mA,bar"); // Header
     file.println("time_us,sol_valve_action,prop_valve_ma,press_bar"); // Header
     for (int i = 0; i < currentCount; i++) {
@@ -1393,7 +1393,8 @@ void loop() {
       if (strlen(command) > 1) {
         requestedCount = parseIntInString(command, 1);
         if (requestedCount <= 0) {
-          printError("D count must be >= 1! To run indefinitely, send D without a number.");
+          printError("D count must be >= 1! To run indefinitely, send D "
+                     "without a number.");
           return;
         }
       }
