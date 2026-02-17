@@ -69,7 +69,7 @@ Example run output:
 STARTING_RUN
 FINISHED
 SAVED_TO_FLASH
-START_OF_FILE experiment_dataset_0001.csv
+START_OF_FILE experiment_log_0001.csv
 run_nr,1
 trigger_t0_us,149580895
 time_us,sol_valve_action,prop_valve_ma,press_bar

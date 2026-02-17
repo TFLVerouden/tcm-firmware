@@ -391,7 +391,7 @@ void startRunSession() {
   // Clean up old session files so new runs can overwrite them
   for (uint32_t i = 1; i <= lastSessionCount; i++) {
     char filename[32];
-    snprintf(filename, sizeof(filename), "experiment_dataset_%04lu.csv",
+    snprintf(filename, sizeof(filename), "experiment_log_%04lu.csv",
              static_cast<unsigned long>(i));
     if (fatfs.exists(filename)) {
       fatfs.remove(filename);
@@ -408,8 +408,7 @@ void saveToFlash() {
   // Advance run index and build the filename for this run
   runCounter++;
   snprintf(lastSavedFilename, sizeof(lastSavedFilename),
-           "experiment_dataset_%04lu.csv",
-           static_cast<unsigned long>(runCounter));
+           "experiment_log_%04lu.csv", static_cast<unsigned long>(runCounter));
   // Track how many files exist in the current session
   if (runCounter > lastSessionCount) {
     lastSessionCount = runCounter;
