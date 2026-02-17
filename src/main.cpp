@@ -710,8 +710,7 @@ void clearPersistentFiles() {
     fatfs.remove(DATASET_FILE);
   }
 
-  // Remove any experiment CSV files from flash
-  const char *csvPrefix = "experiment_dataset_";
+  // Remove any CSV files from flash
   File root = fatfs.open("/");
   if (root) {
     File entry = root.openNextFile();
@@ -720,8 +719,7 @@ void clearPersistentFiles() {
         char name[64];
         if (entry.getName(name, sizeof(name))) {
           size_t nameLen = strlen(name);
-          if (strncmp(name, csvPrefix, strlen(csvPrefix)) == 0 &&
-              nameLen >= 4 && strncmp(name + nameLen - 4, ".csv", 4) == 0) {
+          if (nameLen >= 4 && strncmp(name + nameLen - 4, ".csv", 4) == 0) {
             entry.close();
             fatfs.remove(name);
           } else {
