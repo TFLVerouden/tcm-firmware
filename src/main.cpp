@@ -422,7 +422,8 @@ void saveToFlash() {
     // Add run metadata and logged data rows
     file.printf("Run,%lu\n", static_cast<unsigned long>(runCounter));
     file.printf("Trigger T0 (us),%lu\n", tick);
-    file.println("us,v1 action,v2 set mA,bar"); // Header
+    // file.println("us,v1 action,v2 set mA,bar"); // Header
+    file.println("time_us,sol_valve_action,prop_valve_ma,press_bar"); // Header
     for (int i = 0; i < currentCount; i++) {
       file.printf("%lu,%d,%.2f,%.2f\n", logs[i].timestamp, logs[i].valve1,
                   logs[i].valve2_mA, logs[i].pressure);

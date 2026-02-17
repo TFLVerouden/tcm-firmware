@@ -38,3 +38,22 @@ Commands are ASCII lines terminated by newline (\n). Units are noted per command
 ## Logs
 
 Run logs can be stored in QSPI flash. Serial output can be captured to the [logs](logs/) folder. When logs are streamed, output is wrapped by `START_OF_FILE <filename>` and `END_OF_FILE` markers.
+
+Example run output:
+
+```text
+EXECUTING_DATASET
+FINISHED
+SAVED_TO_FLASH
+START_OF_FILE experiment_dataset_0001.csv
+Run,1
+Trigger T0 (us),500352036
+us,v1 action,v2 set mA,bar
+500352004,-1,0.00,1.01
+500352032,-1,12.00,1.01
+500352036,1,-1.00,1.01
+500357903,-1,20.00,1.00
+500557902,-1,12.00,0.93
+500557906,0,-1.00,0.93
+END_OF_FILE
+```
