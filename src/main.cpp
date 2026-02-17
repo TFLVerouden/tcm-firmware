@@ -430,7 +430,7 @@ void saveToFlash() {
     file.close();
     Serial.println("SAVED_TO_FLASH");
   } else {
-    DEBUG_PRINTLN("Error opening file for writing!");
+    printError("Unable to open file for writing!");
   }
   currentCount = 0; // Reset RAM log count after saving
 }
@@ -438,32 +438,31 @@ void saveToFlash() {
 void dumpToSerial() {
   // Stream the latest run file over serial
   if (strlen(lastSavedFilename) == 0) {
-    DEBUG_PRINTLN("No dataset saved yet!");
+    printError("No dataset saved yet!");
     return;
   }
 
   if (!fatfs.exists(lastSavedFilename)) {
-    DEBUG_PRINTLN("Last dataset file not found in flash!");
+    printError("Last dataset file not found in flash!");
     return;
   }
 
   File file = fatfs.open(lastSavedFilename, FILE_READ);
   if (file) {
-    // Announce the file and run index for host parsing
-    Serial.print("FILE: ");
+    // Announce the file for host parsing
+    Serial.print("START_OF_FILE ");
     Serial.println(lastSavedFilename);
-    Serial.print("RUN: ");
-    Serial.println(static_cast<unsigned long>(runCounter));
-    Serial.println("START_OF_FILE");
 
+    // Print file contents line by line
     while (file.available()) {
       Serial.write(file.read());
     }
 
+    // Announce end of file for host parsing
     Serial.println("END_OF_FILE");
     file.close();
   } else {
-    DEBUG_PRINTLN("Error opening file for reading!");
+    printError("Unable to open file for reading!");
   }
 }
 
@@ -991,6 +990,8 @@ void loop() {
         valve.set_mA(current);
         DEBUG_PRINT("Last set bitvalue of proportional valve: ");
         DEBUG_PRINTLN(valve.get_last_set_bitval());
+        Serial.print("SET_VALVE ");
+        Serial.println(current, 2);
       }
 
       // ---------------------------------------------------------------------
@@ -1027,6 +1028,8 @@ void loop() {
         savePersistentState();
         DEBUG_PRINT("Last set bitvalue of pressure regulator: ");
         DEBUG_PRINTLN(pressure.get_last_set_bitval());
+        Serial.print("SET_PRESSURE ");
+        Serial.println(lastPressure_bar, 2);
       }
 
       // ---------------------------------------------------------------------
@@ -1144,6 +1147,8 @@ void loop() {
 
       if (!saveDatasetToFlash()) {
         DEBUG_PRINTLN("Failed to persist dataset to flash!");
+      } else {
+        Serial.println("DATASET_SAVED");
       }
 
       // LED color off when whole dataset is received
@@ -1171,7 +1176,7 @@ void loop() {
           solValveOpen = false;
           valve.set_mA(default_valve);
           setLedColor(COLOR_EXECUTING);
-          Serial.println("EXECUTING_DATASET");
+          Serial.println("STARTING_RUN");
         }
       }
 
@@ -1186,12 +1191,13 @@ void loop() {
         solValveOpen = true;
       }
       setLedColor(COLOR_VALVE_OPEN);
+      Serial.println("SOLENOID_OPENED");
 
     } else if (strncmp(command, "C!", 2) == 0) {
       // Command: C!
       // Clear persisted state/dataset files from flash
       clearPersistentFiles();
-      Serial.println("PERSISTENCE_CLEARED");
+      Serial.println("MEMORY_CLEARED");
 
     } else if (strncmp(command, "C", 1) == 0) {
       // Command: C
@@ -1212,6 +1218,7 @@ void loop() {
       delayedRunPending = false;
       dropletRunsRemaining = 0;
       setLedColor(COLOR_IDLE);
+      Serial.println("SOLENOID_CLOSED");
 
     } else if (strncmp(command, "D", 1) == 0) {
       // Command: D
@@ -1233,6 +1240,8 @@ void loop() {
       startRunSession();
       if (!startDropletDetection()) {
         dropletRunsRemaining = 0;
+      } else {
+        Serial.println("DROPLET_ARMED");
       }
 
     } else if (strncmp(command, "W?", 2) == 0) {
@@ -1250,6 +1259,8 @@ void loop() {
       DEBUG_PRINT("Pre-trigger wait: ");
       DEBUG_PRINT(pre_trigger_delay_us);
       DEBUG_PRINTLN(" µs");
+      Serial.print("SET_WAIT ");
+      Serial.println(pre_trigger_delay_us);
 
     } else if (strncmp(command, "A", 1) == 0) {
       // Command: A <0|1>
@@ -1278,10 +1289,14 @@ void loop() {
         setLedColor(COLOR_LASER);
         laserTestActive = true;
         laserTestLastPrint = 0;
+        Serial.println("LASER_TEST_ON");
       } else if (!enableLaser && laserTestActive) {
         stopLaser();
         setLedColor(COLOR_IDLE);
         laserTestActive = false;
+        Serial.println("LASER_TEST_OFF");
+      } else {
+        Serial.println(laserTestActive ? "LASER_TEST_ON" : "LASER_TEST_OFF");
       }
 
       // ---------------------------------------------------------------------
