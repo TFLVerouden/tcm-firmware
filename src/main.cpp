@@ -509,7 +509,7 @@ void setup() {
 
   // Initialize the SHT4x temperature & humidity sensor
   if (!sht4.begin()) {
-    printError("Failed to find SHT4x sensor");
+    printError("Failed to find SHT4x sensor!");
   }
 
   // Configure SHT4x for high precision, no heater
@@ -847,7 +847,7 @@ void loop() {
 
       // If signal is near zero, assume PDA power is off -> abort detection
       if (signalVoltage <= PDA_MIN_VALID) {
-        printError("PDA signal too low; check photodetector or laser power.");
+        printError("PDA signal too low! Check photodetector or laser power.");
         stopLaser();
         detectingDroplet = false;
         belowThreshold = false;
@@ -980,6 +980,10 @@ void loop() {
       // Command: B <0|1>
       // Enable (1) or disable (0) debug output
       int enable = parseIntInString(command, 1);
+      if (enable != 0 && enable != 1) {
+        printError("B expects 0 or 1!");
+        return;
+      }
       debug_enabled = (enable == 1);
       Serial.println(debug_enabled ? "DEBUG_ON" : "DEBUG_OFF");
 
@@ -1035,7 +1039,7 @@ void loop() {
       DEBUG_PRINTLN("O       - Open solenoid valve");
       DEBUG_PRINTLN("C       - Close solenoid valve (and stop any run)");
       DEBUG_PRINTLN("A <0|1> - Laser test mode off/on (streams photodiode "
-            "readings when on)");
+                    "readings when on)");
       DEBUG_PRINTLN("[Read Out Sensors]");
       DEBUG_PRINTLN("P?      - Read current pressure (bar)");
       DEBUG_PRINTLN("T?      - Read temperature & humidity");
@@ -1043,10 +1047,10 @@ void loop() {
       DEBUG_PRINTLN("W <us>  - Set wait before run in microseconds");
       DEBUG_PRINTLN("W?      - Read current wait before run in microseconds");
       DEBUG_PRINTLN("C!      - Clear persisted state/dataset files and delete "
-            "logged CSV files");
+                    "logged CSV files");
       DEBUG_PRINTLN("[Dataset Handling]");
       DEBUG_PRINTLN("L <N> <duration_ms> <csv> - Load dataset. CSV format: "
-            "<ms0>,<mA0>,<e0>,<ms1>,<mA1>,<e1>,...,<msN>,<mAN>,<eN>");
+                    "<ms0>,<mA0>,<e0>,<ms1>,<mA1>,<e1>,...,<msN>,<mAN>,<eN>");
       DEBUG_PRINTLN("L?      - Show loaded dataset status");
       DEBUG_PRINTLN("[Cough]");
       DEBUG_PRINTLN("R       - Run the loaded dataset");
@@ -1076,7 +1080,8 @@ void loop() {
         Serial.println(current, 2);
       }
 
-    } else if (strncmp(command, "P", 1) == 0 && strncmp(command, "P?", 2) != 0) {
+    } else if (strncmp(command, "P", 1) == 0 &&
+               strncmp(command, "P?", 2) != 0) {
       // Command: P <bar>
       // Set pressure regulator to <bar>
 
@@ -1116,7 +1121,8 @@ void loop() {
       setLedColor(COLOR_VALVE_OPEN);
       Serial.println("SOLENOID_OPENED");
 
-    } else if (strncmp(command, "C", 1) == 0 && strncmp(command, "C!", 2) != 0) {
+    } else if (strncmp(command, "C", 1) == 0 &&
+               strncmp(command, "C!", 2) != 0) {
       // Command: C
       // Manually close solenoid valve and stop any active run/detection
       if (solValveOpen) {
@@ -1139,20 +1145,14 @@ void loop() {
 
     } else if (strncmp(command, "A", 1) == 0) {
       // Command: A <0|1>
-      // Enable (1) or disable (0) laser test mode; no arg toggles.
-      bool enableLaser = !laserTestActive;
-      if (strlen(command) > 1) {
-        int enable = parseIntInString(command, 1);
-        if (enable == 0) {
-          enableLaser = false;
-        } else if (enable == 1) {
-          enableLaser = true;
-        } else {
-          printError("A expects 0 or 1");
-          return;
-        }
+      // Enable (1) or disable (0) laser test mode.
+      int enable = parseIntInString(command, 1);
+      if (enable != 0 && enable != 1) {
+        printError("A expects 0 or 1!");
+        return;
       }
 
+      bool enableLaser = (enable == 1);
       if (enableLaser && !laserTestActive) {
         if (detectingDroplet) {
           detectingDroplet = false;
@@ -1190,7 +1190,8 @@ void loop() {
       // ---------------------------------------------------------------------
       // Configuration
       // ---------------------------------------------------------------------
-    } else if (strncmp(command, "W", 1) == 0 && strncmp(command, "W?", 2) != 0) {
+    } else if (strncmp(command, "W", 1) == 0 &&
+               strncmp(command, "W?", 2) != 0) {
       // Command: W <delay_us>
       // Set delay between droplet detection and starting dataset execution
       pre_trigger_delay_us = parseIntInString(command, 1);
@@ -1217,7 +1218,8 @@ void loop() {
       // ---------------------------------------------------------------------
       // Dataset handling
       // ---------------------------------------------------------------------
-    } else if (strncmp(command, "L", 1) == 0 && strncmp(command, "L?", 2) != 0) {
+    } else if (strncmp(command, "L", 1) == 0 &&
+               strncmp(command, "L?", 2) != 0) {
       // Parse incomming dataset. Command: "L <N_datapoints>
       // <Time0>,<mA0>,<E0>,<Time1>,<mA1>,<E1>,...,<TimeN>,<mAN>,<EN>"
       // where E is 0/1 solenoid enable.
@@ -1227,7 +1229,7 @@ void loop() {
       const char *delim = ","; // Serial dataset delimiter
 
       if (strlen(command) < 3) {
-        printError("\"L\" command is not followed by dataset");
+        printError("\"L\" command is not followed by dataset!");
         return;
       }
 
@@ -1272,7 +1274,7 @@ void loop() {
         // Check again if item is not NULL
         if (idx == NULL) {
           printError("Token was NULL, breaking CSV parsing. Upload new "
-                     "dataset! Error at data index ",
+                     "dataset! Error at data index",
                      dataIndex);
           resetDataArrays();
           break;
@@ -1284,7 +1286,7 @@ void loop() {
         idx = strtok(NULL, delim); // Get next csv buffer index: enable flag
         if (idx == NULL) {
           printError("Token was NULL, breaking CSV parsing. Upload new "
-                     "dataset! Error at data index ",
+                     "dataset! Error at data index",
                      dataIndex);
           resetDataArrays();
           break;
@@ -1293,7 +1295,7 @@ void loop() {
         int enableInt = atoi(idx);
         if (enableInt != 0 && enableInt != 1) {
           printError("Enable flag must be 0 or 1. Upload new dataset! Error at "
-                     "data index ",
+                     "data index",
                      dataIndex);
           resetDataArrays();
           break;
@@ -1375,7 +1377,7 @@ void loop() {
       if (strlen(command) > 1) {
         requestedCount = parseIntInString(command, 1);
         if (requestedCount <= 0) {
-          printError("D count must be >= 1");
+          printError("D count must be >= 1! To run indefinitely, send D without a number.");
           return;
         }
       }
@@ -1391,7 +1393,7 @@ void loop() {
 
     } else {
       // Unknown command
-      printError("Unknown command");
+      printError("Unknown command:", command);
     }
   }
 }
