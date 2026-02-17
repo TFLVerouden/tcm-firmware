@@ -34,7 +34,8 @@ Commands are ASCII lines terminated by newline (\n). Units are noted per command
 
 - `W <us>`: Set wait before run in microseconds. Replies `SET_WAIT <us>`.
 - `W?`: Read current wait before run in microseconds. Replies `W<us>`.
-- `C!`: Clear persisted state/dataset files and delete logged CSV files. Replies `MEMORY_CLEARED`.
+- `Q`: Delete logged CSV files matching `experiment_dataset_*.csv`. Replies `LOGS_CLEARED`.
+- `Q!`: `Q` plus clear persisted state/dataset files. Replies `MEMORY_CLEARED`.
 
 ### Dataset Handling
 

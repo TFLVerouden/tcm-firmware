@@ -701,16 +701,9 @@ void resetDataArrays() {
   datasetDuration = 0;
 }
 
-void clearPersistentFiles() {
-  // Remove persisted state and dataset files from flash
-  if (fatfs.exists(STATE_FILE)) {
-    fatfs.remove(STATE_FILE);
-  }
-  if (fatfs.exists(DATASET_FILE)) {
-    fatfs.remove(DATASET_FILE);
-  }
-
-  // Remove any CSV files from flash
+void clearRunCsvFiles() {
+  // Remove experiment CSV files from flash
+  const char *csvPrefix = "experiment_dataset_";
   File root = fatfs.open("/");
   if (root) {
     File entry = root.openNextFile();
@@ -719,7 +712,8 @@ void clearPersistentFiles() {
         char name[64];
         if (entry.getName(name, sizeof(name))) {
           size_t nameLen = strlen(name);
-          if (nameLen >= 4 && strncmp(name + nameLen - 4, ".csv", 4) == 0) {
+          if (strncmp(name, csvPrefix, strlen(csvPrefix)) == 0 &&
+              nameLen >= 4 && strncmp(name + nameLen - 4, ".csv", 4) == 0) {
             entry.close();
             fatfs.remove(name);
           } else {
@@ -735,16 +729,30 @@ void clearPersistentFiles() {
     }
     root.close();
   }
+}
+
+void clearSessionTracking() {
+  // Reset session counters and latest filename tracking
+  runCounter = 0;
+  lastSessionCount = 0;
+  lastSavedFilename[0] = '\0';
+  currentCount = 0;
+}
+
+void clearPersistentStateAndDataset() {
+  // Remove persisted state and dataset files from flash
+  if (fatfs.exists(STATE_FILE)) {
+    fatfs.remove(STATE_FILE);
+  }
+  if (fatfs.exists(DATASET_FILE)) {
+    fatfs.remove(DATASET_FILE);
+  }
 
   // Reset in-memory persistence tracking (do not alter live outputs)
   pressureInitializedFromFlash = false;
   waitInitializedFromFlash = false;
   lastPressure_bar = 0.0f;
   resetDataArrays();
-  runCounter = 0;
-  lastSessionCount = 0;
-  lastSavedFilename[0] = '\0';
-  currentCount = 0;
 }
 
 // ============================================================================
@@ -1044,8 +1052,9 @@ void loop() {
       DEBUG_PRINTLN("[Configuration]");
       DEBUG_PRINTLN("W <us>  - Set wait before run in microseconds");
       DEBUG_PRINTLN("W?      - Read current wait before run in microseconds");
-      DEBUG_PRINTLN("C!      - Clear persisted state/dataset files and delete "
-                    "logged CSV files");
+      DEBUG_PRINTLN(
+          "Q       - Delete logged CSV files (experiment_dataset_*.csv)");
+      DEBUG_PRINTLN("Q!      - Q + clear persisted state and dataset");
       DEBUG_PRINTLN("[Dataset Handling]");
       DEBUG_PRINTLN("L <N> <duration_ms> <csv> - Load dataset. CSV format: "
                     "<ms0>,<mA0>,<e0>,<ms1>,<mA1>,<e1>,...,<msN>,<mAN>,<eN>");
@@ -1119,8 +1128,7 @@ void loop() {
       setLedColor(COLOR_VALVE_OPEN);
       Serial.println("SOLENOID_OPENED");
 
-    } else if (strncmp(command, "C", 1) == 0 &&
-               strncmp(command, "C!", 2) != 0) {
+    } else if (strncmp(command, "C", 1) == 0) {
       // Command: C
       // Manually close solenoid valve and stop any active run/detection
       if (solValveOpen) {
@@ -1207,11 +1215,21 @@ void loop() {
       Serial.print("W");
       Serial.println(pre_trigger_delay_us);
 
-    } else if (strncmp(command, "C!", 2) == 0) {
-      // Command: C!
-      // Clear persisted state/dataset files from flash
-      clearPersistentFiles();
+    } else if (strncmp(command, "Q!", 2) == 0) {
+      // Command: Q!
+      // Clear experiment CSV logs and persisted state/dataset
+      clearRunCsvFiles();
+      clearPersistentStateAndDataset();
+      clearSessionTracking();
       Serial.println("MEMORY_CLEARED");
+
+    } else if (strncmp(command, "Q", 1) == 0 &&
+               strncmp(command, "Q!", 2) != 0) {
+      // Command: Q
+      // Clear experiment CSV logs only
+      clearRunCsvFiles();
+      clearSessionTracking();
+      Serial.println("LOGS_CLEARED");
 
       // ---------------------------------------------------------------------
       // Dataset handling
