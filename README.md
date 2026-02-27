@@ -45,8 +45,10 @@ Commands are ASCII lines terminated by newline (\n). Units are noted per command
 ### Cough
 
 - `R`: Run the loaded dataset. Replies `STARTING_RUN` (immediate run). Later replies `STARTING_RUN`, `FINISHED`, and file transfer markers when logs are streamed.
-- `D`: Droplet-detect then run dataset once. Replies `DROPLET_ARMED` on success.
-- `D <n>`: Droplet-detect `n` times then stop. Replies `DROPLET_ARMED` on success.
+- `D`: Droplet-detect only (continuous). Replies `DROPLET_ARMED` on success and `DROPLET_DETECTED` on each detection.
+- `D <n>`: Droplet-detect only `n` times then stop. Replies `DROPLET_ARMED` on success.
+- `D!`: Droplet-detect then run loaded dataset (continuous). Replies `DROPLET_ARMED` on success.
+- `D! <n>`: Droplet-detect then run loaded dataset `n` times then stop. Replies `DROPLET_ARMED` on success.
 
 ## Files
 

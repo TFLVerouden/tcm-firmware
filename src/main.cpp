@@ -764,23 +764,26 @@ void loop() {
   static bool performingTrigger = false; // Tracks if trigger pulse is active
   static bool detectingDroplet = false;  // Tracks if in droplet detection mode
   static bool belowThreshold = false;    // Tracks if signal is below threshold
+  static bool detectionBaselineReady =
+      false; // True after first valid post-delay sample is captured
   static bool delayedRunPending = false; // Waiting pre-trigger delay before RUN
   static uint32_t delayedRunStartTime = 0; // When delay waiting started [µs]
   static uint32_t detectionStartTime =
       0;                           // When laser/detection was started [µs]
   static bool isExecuting = false; // Tracks if waiting to run loaded sequence
+  static bool dropletRunEnabled = false; // True: detect then run dataset
   static bool setPressure =
       pressureInitializedFromFlash; // Tracks if pressure regulator has been set
   static bool laserTestActive = false;    // Laser test mode on/off
   static uint32_t laserTestLastPrint = 0; // Last photodiode print time [ms]
 
-  auto startDropletDetection = [&]() -> bool {
+  auto startDropletDetection = [&](bool runAfterDetection) -> bool {
     // Validate prerequisites before arming detection
-    if (dataIndex == 0) {
+    if (runAfterDetection && dataIndex == 0) {
       printError("Dataset is empty! Upload first using L command.");
       return false;
     }
-    if (!setPressure) {
+    if (runAfterDetection && !setPressure) {
       printError("Pressure regulator not set! Set it first using P command.");
       return false;
     }
@@ -794,12 +797,14 @@ void loop() {
     isExecuting = false;
     sequenceIndex = 0;
     delayedRunPending = false;
+    dropletRunEnabled = runAfterDetection;
 
     // Turn on laser and start timing for detection
     startLaser();
     setLedColor(COLOR_LASER);
     detectingDroplet = true;
     belowThreshold = false;
+    detectionBaselineReady = false;
     detectionStartTime = micros();
     DEBUG_PRINTLN("Detecting droplets (primed to cough)");
     return true;
@@ -856,17 +861,24 @@ void loop() {
         stopLaser();
         detectingDroplet = false;
         belowThreshold = false;
+        detectionBaselineReady = false;
         delayedRunPending = false;
         dropletRunsRemaining = 0;
         setLedColor(COLOR_IDLE);
         return;
       }
 
+      bool signalBelowThreshold = (signalVoltage < PDA_THR);
+
+      // First valid sample after arm/re-arm initializes edge state only
+      if (!detectionBaselineReady) {
+        belowThreshold = signalBelowThreshold;
+        detectionBaselineReady = true;
+      }
+
       // Falling edge: droplet detected (signal drops below threshold)
-      if (!belowThreshold && signalVoltage < PDA_THR) {
+      if (detectionBaselineReady && !belowThreshold && signalBelowThreshold) {
         belowThreshold = true;
-        delayedRunPending = true;
-        delayedRunStartTime = micros();
         if (dropletRunsRemaining > 0) {
           dropletRunsRemaining--;
         }
@@ -877,6 +889,21 @@ void loop() {
 
         setLedColor(COLOR_DROPLET);
         Serial.println("DROPLET_DETECTED");
+
+        if (dropletRunEnabled) {
+          delayedRunPending = true;
+          delayedRunStartTime = micros();
+        } else if (dropletRunsRemaining != 0) {
+          if (!startDropletDetection(false)) {
+            dropletRunsRemaining = 0;
+            setLedColor(COLOR_IDLE);
+          }
+        } else {
+          setLedColor(COLOR_IDLE);
+        }
+      } else {
+        // Keep edge state updated while waiting for next falling edge
+        belowThreshold = signalBelowThreshold;
       }
     }
   }
@@ -957,7 +984,7 @@ void loop() {
 
       // If in multi-run mode, re-arm detection for the next droplet
       if (dropletRunsRemaining != 0) {
-        if (!startDropletDetection()) {
+        if (!startDropletDetection(true)) {
           dropletRunsRemaining = 0;
         }
       }
@@ -1060,8 +1087,10 @@ void loop() {
       DEBUG_PRINTLN("L?      - Show loaded dataset status");
       DEBUG_PRINTLN("[Cough]");
       DEBUG_PRINTLN("R       - Run the loaded dataset");
-      DEBUG_PRINTLN("D       - Droplet-detect then run dataset once");
-      DEBUG_PRINTLN("D <n>   - Droplet-detect n times then stop");
+      DEBUG_PRINTLN("D       - Droplet-detect only (continuous)");
+      DEBUG_PRINTLN("D <n>   - Droplet-detect only n times then stop");
+      DEBUG_PRINTLN("D!      - Droplet-detect then run dataset (continuous)");
+      DEBUG_PRINTLN("D! <n>  - Droplet-detect then run dataset n times");
 
       // ---------------------------------------------------------------------
       // Control hardware
@@ -1142,6 +1171,7 @@ void loop() {
       if (detectingDroplet) {
         stopLaser();
         detectingDroplet = false;
+        detectionBaselineReady = false;
       }
       delayedRunPending = false;
       dropletRunsRemaining = 0;
@@ -1162,6 +1192,7 @@ void loop() {
         if (detectingDroplet) {
           detectingDroplet = false;
           belowThreshold = false;
+          detectionBaselineReady = false;
           delayedRunPending = false;
         }
         dropletRunsRemaining = 0;
@@ -1382,10 +1413,34 @@ void loop() {
         }
       }
 
-    } else if (strncmp(command, "D", 1) == 0) {
-      // Command: D
+    } else if (strncmp(command, "D!", 2) == 0) {
+      // Command: D!
       // Arm droplet detection; upon droplet detection wait W delay and run
       // the currently loaded dataset.
+      // Optional count: D! <n>. Without a number: run indefinitely.
+
+      int32_t requestedCount = -1;
+      if (strlen(command) > 2) {
+        requestedCount = parseIntInString(command, 1);
+        if (requestedCount <= 0) {
+          printError("D! count must be >= 1! To run indefinitely, send D! "
+                     "without a number.");
+          return;
+        }
+      }
+
+      dropletRunsRemaining = requestedCount;
+      // New session: clear old files and reset counters
+      startRunSession();
+      if (!startDropletDetection(true)) {
+        dropletRunsRemaining = 0;
+      } else {
+        Serial.println("DROPLET_ARMED");
+      }
+
+    } else if (strncmp(command, "D", 1) == 0) {
+      // Command: D
+      // Arm droplet detection only (no dataset run).
       // Optional count: D <n>. Without a number: run indefinitely.
 
       int32_t requestedCount = -1;
@@ -1399,9 +1454,7 @@ void loop() {
       }
 
       dropletRunsRemaining = requestedCount;
-      // New session: clear old files and reset counters
-      startRunSession();
-      if (!startDropletDetection()) {
+      if (!startDropletDetection(false)) {
         dropletRunsRemaining = 0;
       } else {
         Serial.println("DROPLET_ARMED");
