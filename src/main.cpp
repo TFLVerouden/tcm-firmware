@@ -1256,7 +1256,7 @@ void loop() {
       // D has 1-char prefix, D! has 2-char prefix
       const size_t prefixLen = runAfterDetection ? 2 : 1;
       if (strlen(cmd) > prefixLen) {
-        requestedCount = parseIntInString(cmd, 1);
+        requestedCount = parseIntInString(cmd, prefixLen);
         if (requestedCount <= 0) {
           if (runAfterDetection) {
             printError("D! count must be >= 1! To run indefinitely, send D! "
