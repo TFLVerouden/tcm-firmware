@@ -1177,15 +1177,130 @@ void loop() {
     char *command =
         sc.getCommand(); // Pointer to memory location of serial buffer contents
 
-    // [Group] Connection & debugging
-    if (strncmp(command, "id?", 3) == 0) {
-      // Command: id?
-      // Return device ID for dvg-devices Arduino validation
-      Serial.println("TCM_control");
+    enum class CommandId : uint8_t {
+      IdQuery,
+      DebugToggle,
+      StatusQuery,
+      Help,
+      SetValve,
+      SetPressure,
+      OpenSolenoid,
+      CloseSolenoid,
+      LaserTestToggle,
+      ReadPressure,
+      ReadTempHumidity,
+      WaitSet,
+      WaitQuery,
+      ClearMemory,
+      ClearLogs,
+      LoadDataset,
+      DatasetStatus,
+      Run,
+      DropletRun,
+      DropletDetect,
+      Other
+    };
 
-    } else if (strncmp(command, "B", 1) == 0) {
-      // Command: B <0|1>
-      // Enable (1) or disable (0) debug output
+    auto classifyCommand = [&](const char *cmd) -> CommandId {
+      // Preserve matching precedence for overlapping prefixes
+      if (strncmp(cmd, "id?", 3) == 0)
+        return CommandId::IdQuery;
+      if (strncmp(cmd, "S?", 2) == 0)
+        return CommandId::StatusQuery;
+      if (strncmp(cmd, "P?", 2) == 0)
+        return CommandId::ReadPressure;
+      if (strncmp(cmd, "T?", 2) == 0)
+        return CommandId::ReadTempHumidity;
+      if (strncmp(cmd, "W?", 2) == 0)
+        return CommandId::WaitQuery;
+      if (strncmp(cmd, "Q!", 2) == 0)
+        return CommandId::ClearMemory;
+      if (strncmp(cmd, "L?", 2) == 0)
+        return CommandId::DatasetStatus;
+      if (strncmp(cmd, "D!", 2) == 0)
+        return CommandId::DropletRun;
+      if (strncmp(cmd, "B", 1) == 0)
+        return CommandId::DebugToggle;
+      if (strncmp(cmd, "V", 1) == 0)
+        return CommandId::SetValve;
+      if (strncmp(cmd, "P", 1) == 0)
+        return CommandId::SetPressure;
+      if (strncmp(cmd, "O", 1) == 0)
+        return CommandId::OpenSolenoid;
+      if (strncmp(cmd, "C", 1) == 0)
+        return CommandId::CloseSolenoid;
+      if (strncmp(cmd, "A", 1) == 0)
+        return CommandId::LaserTestToggle;
+      if (strncmp(cmd, "W", 1) == 0)
+        return CommandId::WaitSet;
+      if (strncmp(cmd, "Q", 1) == 0)
+        return CommandId::ClearLogs;
+      if (strncmp(cmd, "L", 1) == 0)
+        return CommandId::LoadDataset;
+      if (strncmp(cmd, "R", 1) == 0)
+        return CommandId::Run;
+      if (strncmp(cmd, "D", 1) == 0)
+        return CommandId::DropletDetect;
+      if (strncmp(cmd, "?", 1) == 0)
+        return CommandId::Help;
+      return CommandId::Other;
+    };
+
+    auto parseDropletRunCount = [&](const char *cmd, bool runAfterDetection,
+                                    int32_t &requestedCount) -> bool {
+      // Shared parser for D / D! count semantics:
+      // - No explicit number => continuous mode (-1)
+      // - Explicit number must be >= 1
+      requestedCount = -1;
+
+      // D has 1-char prefix, D! has 2-char prefix
+      const size_t prefixLen = runAfterDetection ? 2 : 1;
+      if (strlen(cmd) > prefixLen) {
+        requestedCount = parseIntInString(cmd, 1);
+        if (requestedCount <= 0) {
+          if (runAfterDetection) {
+            printError("D! count must be >= 1! To run indefinitely, send D! "
+                       "without a number.");
+          } else {
+            printError("D count must be >= 1! To run indefinitely, send D "
+                       "without a number.");
+          }
+          return false;
+        }
+      }
+      return true;
+    };
+
+    auto armDropletMode = [&](bool runAfterDetection, int32_t requestedCount,
+                              bool resetRunSessionFiles) {
+      // Step 1: force a clean mode boundary (resets mode flags and outputs).
+      stopActiveModes(false);
+
+      // Step 2: persist requested run count in global control state.
+      // -1 => continuous, >0 => finite number of droplet triggers.
+      dropletRunsRemaining = requestedCount;
+
+      // Step 3: optionally reset per-session run files/counters for modes
+      // that execute and log flow-curve runs (D! variants).
+      if (resetRunSessionFiles) {
+        startRunSession();
+      }
+
+      // Step 4: arm droplet detection state machine.
+      if (!startDropletDetection(runAfterDetection)) {
+        dropletRunsRemaining = 0;
+      } else {
+        Serial.println("DROPLET_ARMED");
+      }
+    };
+
+    CommandId commandId = classifyCommand(command);
+    switch (commandId) {
+    case CommandId::IdQuery:
+      Serial.println("TCM_control");
+      break;
+
+    case CommandId::DebugToggle: {
       int enable = parseIntInString(command, 1);
       if (enable != 0 && enable != 1) {
         printError("B expects 0 or 1!");
@@ -1193,10 +1308,10 @@ void loop() {
       }
       debug_enabled = (enable == 1);
       Serial.println(debug_enabled ? "DEBUG_ON" : "DEBUG_OFF");
+      break;
+    }
 
-    } else if (strncmp(command, "S?", 2) == 0) {
-      // Command: S?
-      // Print system status (debug only)
+    case CommandId::StatusQuery:
       DEBUG_PRINTLN("\n=== System Status ===");
       DEBUG_PRINT("Solenoid valve: ");
       DEBUG_PRINTLN(solValveOpen ? "OPEN" : "CLOSED");
@@ -1229,10 +1344,9 @@ void loop() {
       DEBUG_PRINT("Uptime: ");
       DEBUG_PRINT(millis() / 1000);
       DEBUG_PRINTLN(" s");
+      break;
 
-    } else if (strncmp(command, "?", 1) == 0) {
-      // Command: ?
-      // Print help menu
+    case CommandId::Help:
       DEBUG_PRINTLN("\n=== Available Commands ===");
       DEBUG_PRINTLN("[Connection & Debugging]");
       DEBUG_PRINTLN("id?     - Show device ID for auto serial connection");
@@ -1265,119 +1379,9 @@ void loop() {
       DEBUG_PRINTLN("D <n>   - Droplet-detect only n times then stop");
       DEBUG_PRINTLN("D!      - Droplet-detect then run flow curve (cont.)");
       DEBUG_PRINTLN("D! <n>  - Droplet-detect then run flow curve n times");
+      break;
 
-      // [Group] Control hardware
-    } else if (strncmp(command, "V", 1) == 0) {
-      // Command: V <mA>
-      // Set milli amps of proportional valve to <mA>
-
-      float current = parseFloatInString(
-          command, 1); // Parse float from char array 'command'
-
-      // Handle out of allowable range inputs, defaults to specified value
-      if (!current || current < min_mA_valve || current > max_mA) {
-        printError("Valve mA input out of range!");
-
-        // Set T_Click to input mA
-      } else {
-        valve.set_mA(current);
-        DEBUG_PRINT("Last set bitvalue of proportional valve: ");
-        DEBUG_PRINTLN(valve.get_last_set_bitval());
-        Serial.print("SET_VALVE ");
-        Serial.println(current, 2);
-      }
-
-    } else if (strncmp(command, "P", 1) == 0 &&
-               strncmp(command, "P?", 2) != 0) {
-      // Command: P <bar>
-      // Set pressure regulator to <bar>
-
-      // Mark that pressure has been explicitly set
-      if (!setPressure) {
-        setPressure = true;
-      }
-
-      float bar =
-          parseFloatInString(command, 1); // Parse float from char array command
-      float current = pressureBarToCurrent(bar);
-
-      // Handle out of allowable range inputs, defaults to specified value
-      if (!current || current < min_mA_pres_reg || current > max_mA) {
-        printError("Pressure input out of range!");
-
-        // Set T_Click to input mA
-      } else {
-        // Apply pressure, store it, and persist to flash
-        pressure.set_mA(current);
-        lastPressure_bar = bar;
-        pressureInitializedFromFlash = true;
-        savePersistentState();
-        DEBUG_PRINT("Last set bitvalue of pressure regulator: ");
-        DEBUG_PRINTLN(pressure.get_last_set_bitval());
-        Serial.print("SET_PRESSURE ");
-        Serial.println(lastPressure_bar, 2);
-      }
-
-    } else if (strncmp(command, "O", 1) == 0) {
-      // Command: O
-      // Manually open solenoid valve
-      if (!solValveOpen) {
-        openSolValve();
-        solValveOpen = true;
-      }
-      setLedColor(COLOR_VALVE_OPEN);
-      Serial.println("SOLENOID_OPENED");
-
-    } else if (strncmp(command, "C", 1) == 0) {
-      // Command: C
-      // Manually stop all active modes and return outputs to safe state
-      stopActiveModes(true);
-      Serial.println("SOLENOID_CLOSED");
-
-    } else if (strncmp(command, "A", 1) == 0) {
-      // Command: A <0|1>
-      // Enable (1) or disable (0) laser test mode.
-      int enable = parseIntInString(command, 1);
-      if (enable != 0 && enable != 1) {
-        printError("A expects 0 or 1!");
-        return;
-      }
-
-      bool enableLaser = (enable == 1);
-      if (enableLaser && mode != LoopMode::LaserTest) {
-        // Laser test is exclusive: stop other modes first.
-        stopActiveModes(false);
-        startLaser();
-        setLedColor(COLOR_LASER);
-        mode = LoopMode::LaserTest;
-        laserTestLastPrint = 0;
-        Serial.println("LASER_TEST_ON");
-      } else if (!enableLaser && mode == LoopMode::LaserTest) {
-        stopLaser();
-        setLedColor(COLOR_IDLE);
-        mode = LoopMode::Idle;
-        Serial.println("LASER_TEST_OFF");
-      } else {
-        Serial.println(mode == LoopMode::LaserTest ? "LASER_TEST_ON"
-                                                   : "LASER_TEST_OFF");
-      }
-
-      // [Group] Read out sensors
-    } else if (strncmp(command, "P?", 2) == 0) {
-      // Command: P?
-      // Read and return current pressure
-      readPressure(solValveOpen);
-
-    } else if (strncmp(command, "T?", 2) == 0) {
-      // Command: T?
-      // Read and return temperature & humidity
-      readTemperatureHumidity(solValveOpen);
-
-      // [Group] Configuration
-    } else if (strncmp(command, "W", 1) == 0 &&
-               strncmp(command, "W?", 2) != 0) {
-      // Command: W <delay_us>
-      // Set delay between droplet detection and starting dataset execution
+    case CommandId::WaitSet:
       pre_trigger_delay_us = parseIntInString(command, 1);
       waitInitializedFromFlash = true;
       savePersistentState();
@@ -1386,32 +1390,128 @@ void loop() {
       DEBUG_PRINTLN(" µs");
       Serial.print("SET_WAIT ");
       Serial.println(pre_trigger_delay_us);
+      break;
 
-    } else if (strncmp(command, "W?", 2) == 0) {
-      // Command: W?
-      // Read and return current pre-trigger wait time
+    case CommandId::WaitQuery:
       Serial.print("W");
       Serial.println(pre_trigger_delay_us);
+      break;
 
-    } else if (strncmp(command, "Q!", 2) == 0) {
-      // Command: Q!
-      // Clear experiment CSV logs and persisted state/dataset
+    case CommandId::ClearMemory:
       clearRunCsvFiles();
       clearPersistentStateAndDataset();
       clearSessionTracking();
       Serial.println("MEMORY_CLEARED");
+      break;
 
-    } else if (strncmp(command, "Q", 1) == 0 &&
-               strncmp(command, "Q!", 2) != 0) {
-      // Command: Q
-      // Clear experiment CSV logs only
+    case CommandId::ClearLogs:
       clearRunCsvFiles();
       clearSessionTracking();
       Serial.println("LOGS_CLEARED");
+      break;
 
-      // [Group] Flow curve dataset handling
-    } else if (strncmp(command, "L", 1) == 0 &&
-               strncmp(command, "L?", 2) != 0) {
+    case CommandId::SetValve: {
+        // Command: V <mA>
+        float current = parseFloatInString(command, 1);
+        if (!current || current < min_mA_valve || current > max_mA) {
+          printError("Valve mA input out of range!");
+        } else {
+          valve.set_mA(current);
+          DEBUG_PRINT("Last set bitvalue of proportional valve: ");
+          DEBUG_PRINTLN(valve.get_last_set_bitval());
+          Serial.print("SET_VALVE ");
+          Serial.println(current, 2);
+        }
+        break;
+      }
+
+    case CommandId::SetPressure: {
+        // Command: P <bar>
+      // Step 1: mark pressure as user-configured so runs can proceed.
+        if (!setPressure) {
+          setPressure = true;
+        }
+
+      // Step 2: parse user target and convert to regulator current.
+        float bar = parseFloatInString(command, 1);
+        float current = pressureBarToCurrent(bar);
+
+      // Step 3: validate current range before touching hardware.
+        if (!current || current < min_mA_pres_reg || current > max_mA) {
+          printError("Pressure input out of range!");
+        } else {
+        // Step 4: apply output and persist equivalent bar setpoint.
+          pressure.set_mA(current);
+          lastPressure_bar = bar;
+          pressureInitializedFromFlash = true;
+          savePersistentState();
+          DEBUG_PRINT("Last set bitvalue of pressure regulator: ");
+          DEBUG_PRINTLN(pressure.get_last_set_bitval());
+          Serial.print("SET_PRESSURE ");
+          Serial.println(lastPressure_bar, 2);
+        }
+        break;
+      }
+
+    case CommandId::OpenSolenoid:
+        if (!solValveOpen) {
+          openSolValve();
+          solValveOpen = true;
+        }
+        setLedColor(COLOR_VALVE_OPEN);
+        Serial.println("SOLENOID_OPENED");
+        break;
+
+    case CommandId::CloseSolenoid:
+        stopActiveModes(true);
+        Serial.println("SOLENOID_CLOSED");
+        break;
+
+    case CommandId::LaserTestToggle: {
+      // Step 1: parse desired laser-test state.
+        int enable = parseIntInString(command, 1);
+        if (enable != 0 && enable != 1) {
+          printError("A expects 0 or 1!");
+          return;
+        }
+
+        bool enableLaser = (enable == 1);
+        if (enableLaser && mode != LoopMode::LaserTest) {
+        // Step 2a: entering laser-test mode from another mode:
+        // - clear all active modes/flags
+        // - turn laser on
+        // - switch loop mode + reset print ticker
+          stopActiveModes(false);
+          startLaser();
+          setLedColor(COLOR_LASER);
+          mode = LoopMode::LaserTest;
+          laserTestLastPrint = 0;
+          Serial.println("LASER_TEST_ON");
+        } else if (!enableLaser && mode == LoopMode::LaserTest) {
+        // Step 2b: leaving laser-test mode:
+        // - turn laser off
+        // - return to idle mode/LED
+          stopLaser();
+          setLedColor(COLOR_IDLE);
+          mode = LoopMode::Idle;
+          Serial.println("LASER_TEST_OFF");
+        } else {
+        // Step 2c: no state change requested; report current state.
+          Serial.println(mode == LoopMode::LaserTest ? "LASER_TEST_ON"
+                                                     : "LASER_TEST_OFF");
+        }
+        break;
+      }
+
+    case CommandId::ReadPressure:
+        readPressure(solValveOpen);
+        break;
+
+    case CommandId::ReadTempHumidity:
+        readTemperatureHumidity(solValveOpen);
+        break;
+
+    case CommandId::LoadDataset: {
       // Parse incoming dataset. Command: "L <N_datapoints>
       // <Time0>,<mA0>,<E0>,<Time1>,<mA1>,<E1>,...,<TimeN>,<mAN>,<EN>"
       // where E is 0/1 solenoid enable.
@@ -1425,6 +1525,7 @@ void loop() {
         return;
       }
 
+      // Step 1: parse header metadata (line count + total duration).
       // read dataset length from char 2 until space (_)
       // "L_<length>_<dataset>" and instantialize position to start reading
       // data from in strtok
@@ -1443,6 +1544,7 @@ void loop() {
 
       dataIndex = 0; // Used later to only read valuable data from data arrays
 
+      // Step 2: parse all CSV triples into runtime arrays.
       // Parsing rest of the dataset after handshake
       for (int i = 0; i < incomingCount; i++) {
 
@@ -1509,6 +1611,7 @@ void loop() {
 
       Serial.println("DATASET_RECEIVED");
 
+      // Step 3: persist parsed dataset to flash for reboot recovery.
       if (!saveDatasetToFlash()) {
         DEBUG_PRINTLN("Failed to persist dataset to flash!");
       } else {
@@ -1517,9 +1620,10 @@ void loop() {
 
       // LED color off when whole dataset is received
       setLedColor(COLOR_OFF);
+      break;
+    }
 
-    } else if (strncmp(command, "L?", 2) == 0) {
-
+    case CommandId::DatasetStatus:
       if (dataIndex == 0) {
         Serial.println("NO_DATASET");
       } else {
@@ -1529,9 +1633,9 @@ void loop() {
         Serial.print(datasetDuration);
         Serial.println(" MS");
       }
+      break;
 
-      // [Group] Cough / droplet-triggered run modes
-    } else if (strncmp(command, "R", 1) == 0) {
+    case CommandId::Run: {
       // Start a single run using the loaded dataset
       if (dataIndex == 0) {
         printError("Dataset is empty! Upload first using L command.");
@@ -1541,15 +1645,19 @@ void loop() {
       } else if (!setPressure) {
         printError("Pressure regulator not set! Set it first using P command.");
       } else {
-        // Ensure clean transition from any other mode into direct run mode.
+        // Step 1: clear other active modes and reset mode flags/outputs.
         stopActiveModes(false);
 
-        // New session: clear old files and reset counters
+        // Step 2: start fresh run session (file/counter reset).
         startRunSession();
+
+        // Step 3: branch run mode based on pre-trigger delay setting.
         if (pre_trigger_delay_us > 0) {
+          // Delayed execution path: remember delay start timestamp.
           mode = LoopMode::DelayBeforeRun;
           delayedRunStartTime = micros();
         } else {
+          // Immediate execution path: initialize runtime indices/outputs.
           mode = LoopMode::ExecutingRun;
           runCallTime = micros();
           sequenceIndex = 0;
@@ -1559,61 +1667,45 @@ void loop() {
           Serial.println("STARTING_RUN");
         }
       }
+      break;
+    }
 
-    } else if (strncmp(command, "D!", 2) == 0) {
+    case CommandId::DropletRun: {
       // Command: D!
       // Arm droplet detection; upon droplet detection wait W delay and run
       // the currently loaded dataset.
       // Optional count: D! <n>. Without a number: run indefinitely.
 
       int32_t requestedCount = -1;
-      if (strlen(command) > 2) {
-        requestedCount = parseIntInString(command, 1);
-        if (requestedCount <= 0) {
-          printError("D! count must be >= 1! To run indefinitely, send D! "
-                     "without a number.");
-          return;
-        }
+      if (!parseDropletRunCount(command, true, requestedCount)) {
+        return;
       }
 
-      // Ensure clean transition from any other mode into droplet mode.
-      stopActiveModes(false);
-      dropletRunsRemaining = requestedCount;
-      // New session: clear old files and reset counters
-      startRunSession();
-      if (!startDropletDetection(true)) {
-        dropletRunsRemaining = 0;
-      } else {
-        Serial.println("DROPLET_ARMED");
-      }
+      // For D!: reset run-session files/counters because runs will be logged.
+      armDropletMode(true, requestedCount, true);
+      break;
+    }
 
-    } else if (strncmp(command, "D", 1) == 0) {
+    case CommandId::DropletDetect: {
       // Command: D
       // Arm droplet detection only (no dataset run).
       // Optional count: D <n>. Without a number: run indefinitely.
 
       int32_t requestedCount = -1;
-      if (strlen(command) > 1) {
-        requestedCount = parseIntInString(command, 1);
-        if (requestedCount <= 0) {
-          printError("D count must be >= 1! To run indefinitely, send D "
-                     "without a number.");
-          return;
-        }
+      if (!parseDropletRunCount(command, false, requestedCount)) {
+        return;
       }
 
-      // Ensure clean transition from any other mode into droplet mode.
-      stopActiveModes(false);
-      dropletRunsRemaining = requestedCount;
-      if (!startDropletDetection(false)) {
-        dropletRunsRemaining = 0;
-      } else {
-        Serial.println("DROPLET_ARMED");
-      }
+      // For D: no run-session reset needed because this mode does not execute
+      // and log the flow-curve by itself.
+      armDropletMode(false, requestedCount, false);
 
-    } else {
-      // Unknown command
+      break;
+    }
+
+    case CommandId::Other:
       printError("Unknown command:", command);
+      break;
     }
   }
 }
