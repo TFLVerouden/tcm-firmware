@@ -22,7 +22,8 @@ Commands are ASCII lines terminated by newline (\n). Units are noted per command
 - `V <mA>`: Set proportional valve current in mA. Replies `SET_VALVE <mA>`.
 - `P <bar>`: Set pressure regulator in bar. Replies `SET_PRESSURE <bar>`.
 - `O`: Open solenoid valve. Replies `SOLENOID_OPENED`.
-- `C`: Close solenoid valve (and stop any run). Replies `SOLENOID_CLOSED`.
+- `C`: Close solenoid valve. Replies `SOLENOID_CLOSED`.
+- `Q`: Quit all active modes and return to idle. Replies `RETURNED_TO_IDLE`.
 - `A <0|1>`: Laser test mode off/on (streams photodiode readings when on). Replies `LASER_TEST_ON` or `LASER_TEST_OFF`.
 
 ### Read Out Sensors
@@ -34,8 +35,8 @@ Commands are ASCII lines terminated by newline (\n). Units are noted per command
 
 - `W <us>`: Set wait before run in microseconds. Replies `SET_WAIT <us>`.
 - `W?`: Read current wait before run in microseconds. Replies `W<us>`.
-- `Q`: Delete logged CSV files matching `experiment_dataset_*.csv`. Replies `LOGS_CLEARED`.
-- `Q!`: `Q` plus clear persisted state/dataset files. Replies `MEMORY_CLEARED`.
+- `X`: Delete logged CSV files matching `experiment_dataset_*.csv`. Replies `LOGS_CLEARED`.
+- `X!`: `X` plus clear persisted state/dataset files. Replies `MEMORY_CLEARED`.
 
 ### Flow curve dataset Handling
 

@@ -1186,6 +1186,7 @@ void loop() {
       SetPressure,
       OpenSolenoid,
       CloseSolenoid,
+      Quit,
       LaserTestToggle,
       ReadPressure,
       ReadTempHumidity,
@@ -1213,7 +1214,7 @@ void loop() {
         return CommandId::ReadTempHumidity;
       if (strncmp(cmd, "W?", 2) == 0)
         return CommandId::WaitQuery;
-      if (strncmp(cmd, "Q!", 2) == 0)
+      if (strncmp(cmd, "X!", 2) == 0)
         return CommandId::ClearMemory;
       if (strncmp(cmd, "L?", 2) == 0)
         return CommandId::DatasetStatus;
@@ -1229,11 +1230,13 @@ void loop() {
         return CommandId::OpenSolenoid;
       if (strncmp(cmd, "C", 1) == 0)
         return CommandId::CloseSolenoid;
+      if (strncmp(cmd, "Q", 1) == 0)
+        return CommandId::Quit;
       if (strncmp(cmd, "A", 1) == 0)
         return CommandId::LaserTestToggle;
       if (strncmp(cmd, "W", 1) == 0)
         return CommandId::WaitSet;
-      if (strncmp(cmd, "Q", 1) == 0)
+      if (strncmp(cmd, "X", 1) == 0)
         return CommandId::ClearLogs;
       if (strncmp(cmd, "L", 1) == 0)
         return CommandId::LoadDataset;
@@ -1364,7 +1367,8 @@ void loop() {
       DEBUG_PRINTLN("V <mA>  - Set proportional valve current in mA");
       DEBUG_PRINTLN("P <bar> - Set pressure regulator in bar");
       DEBUG_PRINTLN("O       - Open solenoid valve");
-      DEBUG_PRINTLN("C       - Close solenoid valve (and stop any run)");
+        DEBUG_PRINTLN("C       - Close solenoid valve");
+        DEBUG_PRINTLN("Q       - Quit active modes and return to idle");
       DEBUG_PRINTLN("A <0|1> - Laser test mode off/on (streams photodiode "
                     "readings when on)");
       DEBUG_PRINTLN("[Read Out Sensors]");
@@ -1374,8 +1378,8 @@ void loop() {
       DEBUG_PRINTLN("W <us>  - Set wait before run in microseconds");
       DEBUG_PRINTLN("W?      - Read current wait before run in microseconds");
       DEBUG_PRINTLN(
-          "Q       - Delete logged CSV files (experiment_dataset_*.csv)");
-      DEBUG_PRINTLN("Q!      - Q + clear persisted state and dataset");
+          "X       - Delete logged CSV files (experiment_dataset_*.csv)");
+        DEBUG_PRINTLN("X!      - X + clear persisted state and dataset");
       DEBUG_PRINTLN("[Flow curve dataset Handling]");
       DEBUG_PRINTLN("L <N> <duration_ms> <csv> - Load flow curve. CSV format: "
                     "<ms0>,<mA0>,<e0>,<ms1>,<mA1>,<e1>,...,<msN>,<mAN>,<eN>");
@@ -1470,8 +1474,17 @@ void loop() {
       break;
 
     case CommandId::CloseSolenoid:
-      stopActiveModes(true);
+      if (solValveOpen) {
+        closeSolValve();
+        solValveOpen = false;
+      }
+      setLedColor(mode == LoopMode::ExecutingRun ? COLOR_EXECUTING : COLOR_IDLE);
       Serial.println("SOLENOID_CLOSED");
+      break;
+
+    case CommandId::Quit:
+      stopActiveModes(true);
+      Serial.println("RETURNED_TO_IDLE");
       break;
 
     case CommandId::LaserTestToggle: {
