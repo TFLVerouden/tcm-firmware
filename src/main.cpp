@@ -210,8 +210,7 @@ float pressureBarToCurrent(float bar) {
   // Uses the pressure-regulator setpoint calibration.
   constexpr float PRESSURE_SETPOINT_BAR_OFFSET = 2.48821429f;
   constexpr float PRESSURE_SETPOINT_BAR_PER_mA = 0.62242857f;
-  return (bar + PRESSURE_SETPOINT_BAR_OFFSET) /
-         PRESSURE_SETPOINT_BAR_PER_mA;
+  return (bar + PRESSURE_SETPOINT_BAR_OFFSET) / PRESSURE_SETPOINT_BAR_PER_mA;
 }
 
 float pressureCurrentToBar(float current_mA) {
@@ -769,24 +768,43 @@ void clearPersistentStateAndDataset() {
 // ============================================================================
 
 void loop() {
-  // Static variables persist across loop iterations
+  /*
+   * LOOP ROADMAP
+   * -------------------------------------------------------------------------
+   * 1) Persistent state and local helpers (lambdas)
+   * 2) Fast periodic service (trigger timeout, sensor EMA)
+   * 3) Mode processors (laser test, droplet detection, delayed run start)
+   * 4) Active flow curve execution
+   * 5) Serial command dispatch
+   */
+
+  // Persistent loop state (retained across iterations)
+  enum class LoopMode : uint8_t {
+    Idle,
+    DropletDetect,
+    DelayBeforeRun,
+    ExecutingRun,
+    LaserTest
+  };
+
+  static LoopMode mode = LoopMode::Idle;
   static bool solValveOpen = false;      // Tracks if valve is currently open
   static bool performingTrigger = false; // Tracks if trigger pulse is active
-  static bool detectingDroplet = false;  // Tracks if in droplet detection mode
   static bool belowThreshold = false;    // Tracks if signal is below threshold
   static bool detectionBaselineReady =
       false; // True after first valid post-delay sample is captured
-  static bool delayedRunPending = false; // Waiting pre-trigger delay before RUN
   static uint32_t delayedRunStartTime = 0; // When delay waiting started [µs]
   static uint32_t detectionStartTime =
-      0;                           // When laser/detection was started [µs]
-  static bool isExecuting = false; // Tracks if waiting to run loaded sequence
-  static bool dropletRunEnabled = false; // True: detect then run flow curve
+      0; // When laser/detection was started [µs]
+  static bool runAfterDropletDetection =
+      false; // True: detect then run flow curve
   static bool setPressure =
       pressureInitializedFromFlash; // Tracks if pressure regulator has been set
-  static bool laserTestActive = false;    // Laser test mode on/off
   static uint32_t laserTestLastPrint = 0; // Last photodiode print time [ms]
 
+  /* ----------------------------------------------------------------------- */
+  /* [HELPER] Arm droplet detection mode                                     */
+  /* ----------------------------------------------------------------------- */
   auto startDropletDetection = [&](bool runAfterDetection) -> bool {
     // Validate prerequisites before arming detection
     if (runAfterDetection && dataIndex == 0) {
@@ -804,15 +822,13 @@ void loop() {
       solValveOpen = false;
     }
     valve.set_mA(default_valve);
-    isExecuting = false;
     sequenceIndex = 0;
-    delayedRunPending = false;
-    dropletRunEnabled = runAfterDetection;
+    runAfterDropletDetection = runAfterDetection;
 
     // Turn on laser and start timing for detection
     startLaser();
     setLedColor(COLOR_LASER);
-    detectingDroplet = true;
+    mode = LoopMode::DropletDetect;
     belowThreshold = false;
     detectionBaselineReady = false;
     detectionStartTime = micros();
@@ -820,6 +836,9 @@ void loop() {
     return true;
   };
 
+  /* ----------------------------------------------------------------------- */
+  /* [HELPER] Stop/clear all active operation modes                          */
+  /* ----------------------------------------------------------------------- */
   auto stopActiveModes = [&](bool setIdleLed = true) {
     // Centralized teardown for all active operation modes.
     // Used before mode switches and by emergency/stop commands.
@@ -838,18 +857,15 @@ void loop() {
     valve.set_mA(default_valve);
 
     // Stop any active run/detection/test modes.
-    if (detectingDroplet || laserTestActive) {
+    if (mode == LoopMode::DropletDetect || mode == LoopMode::LaserTest) {
       stopLaser();
     }
-    isExecuting = false;
-    detectingDroplet = false;
-    laserTestActive = false;
+    mode = LoopMode::Idle;
 
     // Reset mode-specific control flags/counters.
     sequenceIndex = 0;
-    delayedRunPending = false;
     dropletRunsRemaining = 0;
-    dropletRunEnabled = false;
+    runAfterDropletDetection = false;
     belowThreshold = false;
     detectionBaselineReady = false;
 
@@ -858,10 +874,13 @@ void loop() {
     }
   };
 
+  /* ----------------------------------------------------------------------- */
+  /* [HELPER] Process droplet detection state machine                         */
+  /* ----------------------------------------------------------------------- */
   auto processDropletDetection = [&]() -> bool {
     // Returns true when the current loop iteration should exit early
     // (used after hard PDA fault handling).
-    if (!detectingDroplet) {
+    if (mode != LoopMode::DropletDetect) {
       return false;
     }
 
@@ -878,10 +897,9 @@ void loop() {
     if (signalVoltage <= PDA_MIN_VALID) {
       printError("PDA signal too low! Check photodetector or laser power.");
       stopLaser();
-      detectingDroplet = false;
+      mode = LoopMode::Idle;
       belowThreshold = false;
       detectionBaselineReady = false;
-      delayedRunPending = false;
       dropletRunsRemaining = 0;
       setLedColor(COLOR_IDLE);
       return true;
@@ -912,15 +930,15 @@ void loop() {
     }
 
     stopLaser();
-    detectingDroplet = false;
+    mode = LoopMode::Idle;
 
     setLedColor(COLOR_DROPLET);
     Serial.println("DROPLET_DETECTED");
 
     // Step 7: choose post-detection action based on selected mode.
-    if (dropletRunEnabled) {
+    if (runAfterDropletDetection) {
       // Detect-and-run mode: start pre-run wait timer.
-      delayedRunPending = true;
+      mode = LoopMode::DelayBeforeRun;
       delayedRunStartTime = micros();
     } else if (dropletRunsRemaining != 0) {
       // Detect-only multi mode: immediately re-arm; pda_delay still applies
@@ -937,26 +955,14 @@ void loop() {
     return false;
   };
 
-  // -------------------------------------------------------------------------
-  // Handle trigger pulse timing
-  // -------------------------------------------------------------------------
-  // The trigger pulse is a short signal sent to peripheral devices when the
-  // valve opens. It turns off after TRIGGER_WIDTH microseconds.
-  if (performingTrigger && (micros() - tick >= TRIGGER_WIDTH)) {
-    stopTrigger();
-    performingTrigger = false;
-  }
+  /* ----------------------------------------------------------------------- */
+  /* [HELPER] Process laser test mode                                        */
+  /* ----------------------------------------------------------------------- */
+  auto processLaserTest = [&]() {
+    if (mode != LoopMode::LaserTest) {
+      return;
+    }
 
-  // -------------------------------------------------------------------------
-  // Update pressure sensor
-  // -------------------------------------------------------------------------
-  // Must be called regularly to maintain the exponential moving average
-  R_click.poll_EMA();
-
-  // -------------------------------------------------------------------------
-  // Laser test mode: keep laser on and stream photodiode voltage
-  // -------------------------------------------------------------------------
-  if (laserTestActive) {
     uint32_t now_ms = millis();
     if (now_ms - laserTestLastPrint >= 50) {
       float signalVoltage = readPhotodetector();
@@ -969,45 +975,47 @@ void loop() {
 
       laserTestLastPrint = now_ms;
     }
-  }
+  };
 
-  // -------------------------------------------------------------------------
-  // Droplet detection monitoring
-  // -------------------------------------------------------------------------
-  if (processDropletDetection()) {
-    return;
-  }
+  /* ----------------------------------------------------------------------- */
+  /* [HELPER] Process delayed flow-curve run start                           */
+  /* ----------------------------------------------------------------------- */
+  auto processDelayedRunStart = [&]() {
+    // Wait for configured pre-trigger delay before starting flow curve
+    if (mode != LoopMode::DelayBeforeRun) {
+      return;
+    }
 
-  // -------------------------------------------------------------------------
-  // Handle delayed flow curve start after droplet detection/R command
-  // -------------------------------------------------------------------------
-  // Wait for configured pre-trigger delay before starting flow curve dataset
-  if (delayedRunPending) {
     uint32_t elapsed = micros() - delayedRunStartTime;
 
     if (elapsed < pre_trigger_delay_us) {
       setLedColor(COLOR_WAITING);
-    } else {
-      // Start executing the already-loaded dataset now
-      delayedRunPending = false;
-      isExecuting = true;
-      runCallTime = micros();
-
-      // Initialise dataset execution variables
-      sequenceIndex = 0;
-      solValveOpen = false;
-      valve.set_mA(default_valve);
-
-      setLedColor(COLOR_EXECUTING);
-      Serial.println("EXECUTING_DATASET");
+      return;
     }
-  }
 
-  // Drives the proportional valve, solenoid, and trigger based on the dataset
-  if (isExecuting) {
+    mode = LoopMode::ExecutingRun;
+    runCallTime = micros();
+
+    // Initialise dataset execution variables
+    sequenceIndex = 0;
+    solValveOpen = false;
+    valve.set_mA(default_valve);
+
+    setLedColor(COLOR_EXECUTING);
+    Serial.println("EXECUTING_DATASET");
+  };
+
+  /* ----------------------------------------------------------------------- */
+  /* [HELPER] Process active flow-curve execution                            */
+  /* ----------------------------------------------------------------------- */
+  auto processDatasetExecution = [&]() -> bool {
+    // Returns true when run completion should end this loop iteration.
+    if (mode != LoopMode::ExecutingRun) {
+      return false;
+    }
+
     // Calculate time since start execution
     uint32_t now = (micros() - runCallTime); // Time since RUN is called [µs]
-
     uint32_t now_ms = now / 1000;
 
     // Apply all dataset points that are due
@@ -1016,8 +1024,8 @@ void loop() {
 
       // Proportional valve follows mA column regardless of solenoid enable
       valve.set_mA(value_array[sequenceIndex]);
-        recordEvent(-1, value_array[sequenceIndex],
-              pressureCurrentToBar(R_click.get_EMA_mA()));
+      recordEvent(-1, value_array[sequenceIndex],
+                  pressureCurrentToBar(R_click.get_EMA_mA()));
 
       // Solenoid enable controls solenoid and trigger
       if (enable && !solValveOpen) {
@@ -1043,7 +1051,7 @@ void loop() {
         solValveOpen = false;
       }
 
-      isExecuting = false;
+      mode = LoopMode::Idle;
       sequenceIndex = 0;
       setLedColor(COLOR_OFF);
       Serial.println("FINISHED");
@@ -1057,21 +1065,60 @@ void loop() {
           dropletRunsRemaining = 0;
         }
       }
-      return;
+      return true;
     }
+
+    return false;
+  };
+
+  // =======================================================================
+  // LOOP PHASE 1/4: Fast periodic service
+  // =======================================================================
+
+  // Handle trigger pulse timing
+  // The trigger pulse is a short signal sent to peripheral devices when the
+  // valve opens. It turns off after TRIGGER_WIDTH microseconds.
+  if (performingTrigger && (micros() - tick >= TRIGGER_WIDTH)) {
+    stopTrigger();
+    performingTrigger = false;
   }
 
-  // =========================================================================
-  // Process serial commands
-  // =========================================================================
+  // Pressure sensor must be called regularly to maintain exp. moving average
+  R_click.poll_EMA();
+
+  // =======================================================================
+  // LOOP PHASE 2/4: Mode processors
+  // =======================================================================
+
+  // Laser test mode: keep laser on and stream photodiode voltage
+  processLaserTest();
+
+  // Droplet detection monitoring
+  if (processDropletDetection()) {
+    return;
+  }
+
+  // Delayed flow-curve start after droplet detection / R command
+  processDelayedRunStart();
+
+  // =======================================================================
+  // LOOP PHASE 3/4: Active flow-curve execution
+  // =======================================================================
+
+  // Drives the proportional valve, solenoid, and trigger based on the dataset
+  if (processDatasetExecution()) {
+    return;
+  }
+
+  // =======================================================================
+  // LOOP PHASE 4/4: Serial command dispatch
+  // =======================================================================
   if (sc.available()) {
     // Fetch and decode the latest command line
     char *command =
         sc.getCommand(); // Pointer to memory location of serial buffer contents
 
-    // ---------------------------------------------------------------------
-    // Connection & debugging
-    // ---------------------------------------------------------------------
+    // [Group] Connection & debugging
     if (strncmp(command, "id?", 3) == 0) {
       // Command: id?
       // Return device ID for dvg-devices Arduino validation
@@ -1097,12 +1144,12 @@ void loop() {
       DEBUG_PRINT("Dataset in memory: ");
       DEBUG_PRINTLN((dataIndex == 0) ? "FALSE" : "TRUE");
       DEBUG_PRINT("Executing dataset: ");
-      DEBUG_PRINTLN(isExecuting ? "TRUE" : "FALSE");
+      DEBUG_PRINTLN(mode == LoopMode::ExecutingRun ? "TRUE" : "FALSE");
       DEBUG_PRINT("Trigger: ");
       DEBUG_PRINTLN(performingTrigger ? "ACTIVE" : "IDLE");
       DEBUG_PRINT("Droplet detection: ");
-      DEBUG_PRINTLN(detectingDroplet ? "ACTIVE" : "IDLE");
-      if (detectingDroplet) {
+      DEBUG_PRINTLN(mode == LoopMode::DropletDetect ? "ACTIVE" : "IDLE");
+      if (mode == LoopMode::DropletDetect) {
         DEBUG_PRINT("Photodetector: ");
         DEBUG_PRINT(readPhotodetector());
         DEBUG_PRINTLN(" V");
@@ -1160,9 +1207,7 @@ void loop() {
       DEBUG_PRINTLN("D!      - Droplet-detect then run flow curve (cont.)");
       DEBUG_PRINTLN("D! <n>  - Droplet-detect then run flow curve n times");
 
-      // ---------------------------------------------------------------------
-      // Control hardware
-      // ---------------------------------------------------------------------
+      // [Group] Control hardware
     } else if (strncmp(command, "V", 1) == 0) {
       // Command: V <mA>
       // Set milli amps of proportional valve to <mA>
@@ -1240,26 +1285,25 @@ void loop() {
       }
 
       bool enableLaser = (enable == 1);
-      if (enableLaser && !laserTestActive) {
+      if (enableLaser && mode != LoopMode::LaserTest) {
         // Laser test is exclusive: stop other modes first.
         stopActiveModes(false);
         startLaser();
         setLedColor(COLOR_LASER);
-        laserTestActive = true;
+        mode = LoopMode::LaserTest;
         laserTestLastPrint = 0;
         Serial.println("LASER_TEST_ON");
-      } else if (!enableLaser && laserTestActive) {
+      } else if (!enableLaser && mode == LoopMode::LaserTest) {
         stopLaser();
         setLedColor(COLOR_IDLE);
-        laserTestActive = false;
+        mode = LoopMode::Idle;
         Serial.println("LASER_TEST_OFF");
       } else {
-        Serial.println(laserTestActive ? "LASER_TEST_ON" : "LASER_TEST_OFF");
+        Serial.println(mode == LoopMode::LaserTest ? "LASER_TEST_ON"
+                                                   : "LASER_TEST_OFF");
       }
 
-      // ---------------------------------------------------------------------
-      // Read out sensors
-      // ---------------------------------------------------------------------
+      // [Group] Read out sensors
     } else if (strncmp(command, "P?", 2) == 0) {
       // Command: P?
       // Read and return current pressure
@@ -1270,9 +1314,7 @@ void loop() {
       // Read and return temperature & humidity
       readTemperatureHumidity(solValveOpen);
 
-      // ---------------------------------------------------------------------
-      // Configuration
-      // ---------------------------------------------------------------------
+      // [Group] Configuration
     } else if (strncmp(command, "W", 1) == 0 &&
                strncmp(command, "W?", 2) != 0) {
       // Command: W <delay_us>
@@ -1308,12 +1350,10 @@ void loop() {
       clearSessionTracking();
       Serial.println("LOGS_CLEARED");
 
-      // ---------------------------------------------------------------------
-      // Flow curve dataset handling
-      // ---------------------------------------------------------------------
+      // [Group] Flow curve dataset handling
     } else if (strncmp(command, "L", 1) == 0 &&
                strncmp(command, "L?", 2) != 0) {
-      // Parse incomming dataset. Command: "L <N_datapoints>
+      // Parse incoming dataset. Command: "L <N_datapoints>
       // <Time0>,<mA0>,<E0>,<Time1>,<mA1>,<E1>,...,<TimeN>,<mAN>,<EN>"
       // where E is 0/1 solenoid enable.
 
@@ -1431,9 +1471,7 @@ void loop() {
         Serial.println(" MS");
       }
 
-      // ---------------------------------------------------------------------
-      // Cough
-      // ---------------------------------------------------------------------
+      // [Group] Cough / droplet-triggered run modes
     } else if (strncmp(command, "R", 1) == 0) {
       // Start a single run using the loaded dataset
       if (dataIndex == 0) {
@@ -1449,11 +1487,11 @@ void loop() {
 
         // New session: clear old files and reset counters
         startRunSession();
-        delayedRunPending = (pre_trigger_delay_us > 0);
-        delayedRunStartTime = micros();
-
-        if (!delayedRunPending) {
-          isExecuting = true;
+        if (pre_trigger_delay_us > 0) {
+          mode = LoopMode::DelayBeforeRun;
+          delayedRunStartTime = micros();
+        } else {
+          mode = LoopMode::ExecutingRun;
           runCallTime = micros();
           sequenceIndex = 0;
           solValveOpen = false;
