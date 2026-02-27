@@ -1,8 +1,20 @@
 /*
- * Cough Machine Control System
+ * Twente Cough Machine Control Firmware (main.cpp)
  *
- * Controls a solenoid valve for atomisation experiments with precise timing.
- * Monitors pressure and environmental conditions.
+ * Controls valves for atomisation experiments with precise timing;
+ * reads pressure, temperature, and humidity sensors; manages flow curve
+ * datasets; and logs execution data to flash.
+ 
+ * Responsibilities:
+ * - Hardware setup (valves, laser/PDA, pressure + T/H sensors, QSPI flash)
+ * - Runtime mode/state machine
+ *   (Idle, DropletDetect, DelayBeforeRun, ExecutingRun, LaserTest)
+ * - Serial command parsing and execution (see README for command protocol)
+ *
+ * File layout:
+ * 1) Constants/config + global state
+ * 2) Hardware and persistence helpers
+ * 3) loop() mode processing + command dispatch
  */
 
 #include "Adafruit_SPIFlash.h"
@@ -58,7 +70,7 @@ const int PIN_PDA = A2;   // Analog input from photodetector
 // Note: PIN_DOTSTAR_DATA and PIN_DOTSTAR_CLK are already defined in variant.h
 
 // ============================================================================
-// INITIALIZE DVG_STREAMCOMMAND AND FLOW CURVE DATASETS
+// FLOW-CURVE DATASET BUFFERS
 // ============================================================================
 // Buffers used for receiving and storing the uploaded dataset
 const int MAX_DATA_LENGTH = 2000; // Max serial dataset size
@@ -73,7 +85,7 @@ uint8_t sol_enable_array[MAX_DATA_LENGTH]; // 0/1: solenoid enable
 DvG_StreamCommand sc(Serial, cmd_buf, CMD_BUF_LEN);
 
 // ============================================================================
-// FLOW CURVE DATASET PROCESSING & EXECUTION VARIABLES
+// FLOW-CURVE EXECUTION RUNTIME STATE
 // ============================================================================
 // Indices and counters used during flow curve playback
 int sequenceIndex = 0;     // Index of dataset to execute on time
@@ -81,7 +93,7 @@ int dataIndex = 0;         // Number of datapoints of dataset stored
 int datasetDuration = 0.0; // Duration of the uploaded flow profile
 
 // ============================================================================
-// SETUP FOR QSPI FLASH FILESYSTEM
+// QSPI FLASH FILESYSTEM INTERFACE
 // ============================================================================
 // QSPI flash storage for logged flow curve datasets
 // Setup for the ItsyBitsy M4 internal QSPI flash
@@ -91,7 +103,7 @@ Adafruit_SPIFlash flash(&flashTransport);
 FatFileSystem fatfs;
 
 // ============================================================================
-// FLOW CURVE DATASET EXECUTION LOGGING STRUCTURE (IN RAM)
+// FLOW-CURVE EXECUTION LOGGING (RAM)
 // ============================================================================
 // Log format stored in RAM before it is saved to flash
 struct __attribute__((__packed__)) LogEntry {
@@ -129,7 +141,20 @@ int32_t dropletRunsRemaining = 0; // -1 = continuous, 0 = idle, >0 = remaining
 // This is just another ticker
 uint32_t runCallTime = 0; // Time elapsed since "RUN" command [µs]
 
-// Session tracking for saved files
+// ============================================================================
+// PRESSURE CONVERSION CALIBRATION
+// ============================================================================
+// Setpoint conversion (requested pressure [bar] -> regulator current [mA])
+const float PRESSURE_SETPOINT_BAR_OFFSET = 2.48821429f;
+const float PRESSURE_SETPOINT_BAR_PER_mA = 0.62242857f;
+
+// Sensor readback conversion (measured current [mA] -> pressure [bar])
+const float PRESSURE_READBACK_BAR_PER_mA = 0.6151645155919202f;
+const float PRESSURE_READBACK_BAR_OFFSET = -2.5128908254187095f;
+
+// ============================================================================
+// PERSISTENCE FILE KEYS + SESSION TRACKING
+// ============================================================================
 uint32_t lastSessionCount = 0;
 const char *STATE_FILE = "run_state.txt";       // Stores persistent settings
 const char *DATASET_FILE = "dataset_state.bin"; // Stores last loaded flow curve
@@ -208,16 +233,12 @@ void recordEvent(int8_t v1, float v2, float press) {
 float pressureBarToCurrent(float bar) {
   // Convert requested pressure [bar] to regulator current [mA]
   // Uses the pressure-regulator setpoint calibration.
-  constexpr float PRESSURE_SETPOINT_BAR_OFFSET = 2.48821429f;
-  constexpr float PRESSURE_SETPOINT_BAR_PER_mA = 0.62242857f;
   return (bar + PRESSURE_SETPOINT_BAR_OFFSET) / PRESSURE_SETPOINT_BAR_PER_mA;
 }
 
 float pressureCurrentToBar(float current_mA) {
   // Convert measured sensor current [mA] to pressure [bar]
   // Uses the pressure-sensor readback calibration.
-  constexpr float PRESSURE_READBACK_BAR_PER_mA = 0.6151645155919202f;
-  constexpr float PRESSURE_READBACK_BAR_OFFSET = -2.5128908254187095f;
   return PRESSURE_READBACK_BAR_PER_mA * current_mA +
          PRESSURE_READBACK_BAR_OFFSET;
 }
@@ -787,6 +808,18 @@ void loop() {
     LaserTest
   };
 
+  // LoopMode transition guide:
+  // - Idle -> DropletDetect: D / D! commands via startDropletDetection(...)
+  // - Idle -> DelayBeforeRun: R when pre_trigger_delay_us > 0
+  // - Idle -> ExecutingRun: R when pre_trigger_delay_us == 0
+  // - Idle -> LaserTest: A 1
+  // - DropletDetect -> DelayBeforeRun: droplet detected in D! mode
+  // - DropletDetect -> Idle: droplet detected in D mode, PDA fault, or stop
+  // - DelayBeforeRun -> ExecutingRun: processDelayedRunStart() after delay
+  // - ExecutingRun -> Idle: processDatasetExecution() on run completion
+  // - LaserTest -> Idle: A 0 or stopActiveModes(...)
+  // - Any mode -> Idle: stopActiveModes(...)
+
   static LoopMode mode = LoopMode::Idle;
   static bool solValveOpen = false;      // Tracks if valve is currently open
   static bool performingTrigger = false; // Tracks if trigger pulse is active
@@ -806,6 +839,11 @@ void loop() {
   /* [HELPER] Arm droplet detection mode                                     */
   /* ----------------------------------------------------------------------- */
   auto startDropletDetection = [&](bool runAfterDetection) -> bool {
+    // Responsibility:
+    // - Validate prerequisites (dataset + pressure only when runAfterDetection)
+    // - Reset run-time actuator state relevant to droplet arming
+    // - Set LoopMode::DropletDetect and baseline-tracking flags
+
     // Validate prerequisites before arming detection
     if (runAfterDetection && dataIndex == 0) {
       printError("Flow curve dataset is empty! Upload first using L command.");
@@ -840,6 +878,12 @@ void loop() {
   /* [HELPER] Stop/clear all active operation modes                          */
   /* ----------------------------------------------------------------------- */
   auto stopActiveModes = [&](bool setIdleLed = true) {
+    // Responsibility:
+    // - Bring outputs to safe defaults (trigger low, valve default)
+    // - Turn off laser when relevant
+    // - Reset mode/counters/edge flags that coordinate loop state machines
+    // - Optionally restore idle LED indication
+
     // Centralized teardown for all active operation modes.
     // Used before mode switches and by emergency/stop commands.
 
@@ -878,6 +922,11 @@ void loop() {
   /* [HELPER] Process droplet detection state machine                         */
   /* ----------------------------------------------------------------------- */
   auto processDropletDetection = [&]() -> bool {
+    // Responsibility:
+    // - Enforce pda_delay dead-time
+    // - Detect falling-edge droplet events with baseline initialization
+    // - Transition to DelayBeforeRun or re-arm/idle depending on mode/count
+
     // Returns true when the current loop iteration should exit early
     // (used after hard PDA fault handling).
     if (mode != LoopMode::DropletDetect) {
@@ -981,6 +1030,11 @@ void loop() {
   /* [HELPER] Process delayed flow-curve run start                           */
   /* ----------------------------------------------------------------------- */
   auto processDelayedRunStart = [&]() {
+    // Responsibility:
+    // - Hold execution in DelayBeforeRun until pre-trigger delay has elapsed
+    // - Transition mode to ExecutingRun when delay is complete
+    // - Initialize run timing/indices and output state for execution start
+
     // Wait for configured pre-trigger delay before starting flow curve
     if (mode != LoopMode::DelayBeforeRun) {
       return;
@@ -1009,6 +1063,11 @@ void loop() {
   /* [HELPER] Process active flow-curve execution                            */
   /* ----------------------------------------------------------------------- */
   auto processDatasetExecution = [&]() -> bool {
+    // Responsibility:
+    // - Apply due flow-curve points based on elapsed run time
+    // - Drive proportional + solenoid valve outputs and trigger pulse state
+    // - Finalize run (save + stream logs) and transition back to Idle
+
     // Returns true when run completion should end this loop iteration.
     if (mode != LoopMode::ExecutingRun) {
       return false;
