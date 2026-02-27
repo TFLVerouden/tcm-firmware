@@ -33,7 +33,7 @@ Commands are ASCII lines terminated by newline (\n). Units are noted per command
 
 ### Configuration
 
-- `W <us>`: Set wait before run in microseconds. Replies `SET_WAIT <us>`.
+- `W <us>`: Set wait before run (so after sending R command or after detecting droplet) in microseconds. Replies `SET_WAIT <us>`.
 - `W?`: Read current wait before run in microseconds. Replies `W<us>`.
 - `X`: Delete logged CSV files matching `experiment_dataset_*.csv`. Replies `LOGS_CLEARED`.
 - `X!`: `X` plus clear persisted state/dataset files. Replies `MEMORY_CLEARED`.
