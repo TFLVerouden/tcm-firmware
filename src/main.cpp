@@ -4,7 +4,7 @@
  * Controls valves for atomisation experiments with precise timing;
  * reads pressure, temperature, and humidity sensors; manages flow curve
  * datasets; and logs execution data to flash.
- 
+
  * Responsibilities:
  * - Hardware setup (valves, laser/PDA, pressure + T/H sensors, QSPI flash)
  * - Runtime mode/state machine
@@ -1347,6 +1347,13 @@ void loop() {
       break;
 
     case CommandId::Help:
+      // If debug is off, print an error
+      if (!debug_enabled) {
+        printError("Help menu is only available when debug output is enabled! "
+                   "Enable with B 1 command.");
+        return;
+      }
+
       DEBUG_PRINTLN("\n=== Available Commands ===");
       DEBUG_PRINTLN("[Connection & Debugging]");
       DEBUG_PRINTLN("id?     - Show device ID for auto serial connection");
@@ -1411,105 +1418,105 @@ void loop() {
       break;
 
     case CommandId::SetValve: {
-        // Command: V <mA>
-        float current = parseFloatInString(command, 1);
-        if (!current || current < min_mA_valve || current > max_mA) {
-          printError("Valve mA input out of range!");
-        } else {
-          valve.set_mA(current);
-          DEBUG_PRINT("Last set bitvalue of proportional valve: ");
-          DEBUG_PRINTLN(valve.get_last_set_bitval());
-          Serial.print("SET_VALVE ");
-          Serial.println(current, 2);
-        }
-        break;
+      // Command: V <mA>
+      float current = parseFloatInString(command, 1);
+      if (!current || current < min_mA_valve || current > max_mA) {
+        printError("Valve mA input out of range!");
+      } else {
+        valve.set_mA(current);
+        DEBUG_PRINT("Last set bitvalue of proportional valve: ");
+        DEBUG_PRINTLN(valve.get_last_set_bitval());
+        Serial.print("SET_VALVE ");
+        Serial.println(current, 2);
       }
+      break;
+    }
 
     case CommandId::SetPressure: {
-        // Command: P <bar>
+      // Command: P <bar>
       // Step 1: mark pressure as user-configured so runs can proceed.
-        if (!setPressure) {
-          setPressure = true;
-        }
-
-      // Step 2: parse user target and convert to regulator current.
-        float bar = parseFloatInString(command, 1);
-        float current = pressureBarToCurrent(bar);
-
-      // Step 3: validate current range before touching hardware.
-        if (!current || current < min_mA_pres_reg || current > max_mA) {
-          printError("Pressure input out of range!");
-        } else {
-        // Step 4: apply output and persist equivalent bar setpoint.
-          pressure.set_mA(current);
-          lastPressure_bar = bar;
-          pressureInitializedFromFlash = true;
-          savePersistentState();
-          DEBUG_PRINT("Last set bitvalue of pressure regulator: ");
-          DEBUG_PRINTLN(pressure.get_last_set_bitval());
-          Serial.print("SET_PRESSURE ");
-          Serial.println(lastPressure_bar, 2);
-        }
-        break;
+      if (!setPressure) {
+        setPressure = true;
       }
 
+      // Step 2: parse user target and convert to regulator current.
+      float bar = parseFloatInString(command, 1);
+      float current = pressureBarToCurrent(bar);
+
+      // Step 3: validate current range before touching hardware.
+      if (!current || current < min_mA_pres_reg || current > max_mA) {
+        printError("Pressure input out of range!");
+      } else {
+        // Step 4: apply output and persist equivalent bar setpoint.
+        pressure.set_mA(current);
+        lastPressure_bar = bar;
+        pressureInitializedFromFlash = true;
+        savePersistentState();
+        DEBUG_PRINT("Last set bitvalue of pressure regulator: ");
+        DEBUG_PRINTLN(pressure.get_last_set_bitval());
+        Serial.print("SET_PRESSURE ");
+        Serial.println(lastPressure_bar, 2);
+      }
+      break;
+    }
+
     case CommandId::OpenSolenoid:
-        if (!solValveOpen) {
-          openSolValve();
-          solValveOpen = true;
-        }
-        setLedColor(COLOR_VALVE_OPEN);
-        Serial.println("SOLENOID_OPENED");
-        break;
+      if (!solValveOpen) {
+        openSolValve();
+        solValveOpen = true;
+      }
+      setLedColor(COLOR_VALVE_OPEN);
+      Serial.println("SOLENOID_OPENED");
+      break;
 
     case CommandId::CloseSolenoid:
-        stopActiveModes(true);
-        Serial.println("SOLENOID_CLOSED");
-        break;
+      stopActiveModes(true);
+      Serial.println("SOLENOID_CLOSED");
+      break;
 
     case CommandId::LaserTestToggle: {
       // Step 1: parse desired laser-test state.
-        int enable = parseIntInString(command, 1);
-        if (enable != 0 && enable != 1) {
-          printError("A expects 0 or 1!");
-          return;
-        }
+      int enable = parseIntInString(command, 1);
+      if (enable != 0 && enable != 1) {
+        printError("A expects 0 or 1!");
+        return;
+      }
 
-        bool enableLaser = (enable == 1);
-        if (enableLaser && mode != LoopMode::LaserTest) {
+      bool enableLaser = (enable == 1);
+      if (enableLaser && mode != LoopMode::LaserTest) {
         // Step 2a: entering laser-test mode from another mode:
         // - clear all active modes/flags
         // - turn laser on
         // - switch loop mode + reset print ticker
-          stopActiveModes(false);
-          startLaser();
-          setLedColor(COLOR_LASER);
-          mode = LoopMode::LaserTest;
-          laserTestLastPrint = 0;
-          Serial.println("LASER_TEST_ON");
-        } else if (!enableLaser && mode == LoopMode::LaserTest) {
+        stopActiveModes(false);
+        startLaser();
+        setLedColor(COLOR_LASER);
+        mode = LoopMode::LaserTest;
+        laserTestLastPrint = 0;
+        Serial.println("LASER_TEST_ON");
+      } else if (!enableLaser && mode == LoopMode::LaserTest) {
         // Step 2b: leaving laser-test mode:
         // - turn laser off
         // - return to idle mode/LED
-          stopLaser();
-          setLedColor(COLOR_IDLE);
-          mode = LoopMode::Idle;
-          Serial.println("LASER_TEST_OFF");
-        } else {
+        stopLaser();
+        setLedColor(COLOR_IDLE);
+        mode = LoopMode::Idle;
+        Serial.println("LASER_TEST_OFF");
+      } else {
         // Step 2c: no state change requested; report current state.
-          Serial.println(mode == LoopMode::LaserTest ? "LASER_TEST_ON"
-                                                     : "LASER_TEST_OFF");
-        }
-        break;
+        Serial.println(mode == LoopMode::LaserTest ? "LASER_TEST_ON"
+                                                   : "LASER_TEST_OFF");
       }
+      break;
+    }
 
     case CommandId::ReadPressure:
-        readPressure(solValveOpen);
-        break;
+      readPressure(solValveOpen);
+      break;
 
     case CommandId::ReadTempHumidity:
-        readTemperatureHumidity(solValveOpen);
-        break;
+      readTemperatureHumidity(solValveOpen);
+      break;
 
     case CommandId::LoadDataset: {
       // Parse incoming dataset. Command: "L <N_datapoints>
