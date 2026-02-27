@@ -73,9 +73,9 @@ uint8_t sol_enable_array[MAX_DATA_LENGTH]; // 0/1: solenoid enable
 DvG_StreamCommand sc(Serial, cmd_buf, CMD_BUF_LEN);
 
 // ============================================================================
-// DATASET PROCESSING & EXECUTION VARIABLES
+// FLOW CURVE DATASET PROCESSING & EXECUTION VARIABLES
 // ============================================================================
-// Indices and counters used during dataset playback
+// Indices and counters used during flow curve playback
 int sequenceIndex = 0;     // Index of dataset to execute on time
 int dataIndex = 0;         // Number of datapoints of dataset stored
 int datasetDuration = 0.0; // Duration of the uploaded flow profile
@@ -83,7 +83,7 @@ int datasetDuration = 0.0; // Duration of the uploaded flow profile
 // ============================================================================
 // SETUP FOR QSPI FLASH FILESYSTEM
 // ============================================================================
-// QSPI flash storage for logged datasets
+// QSPI flash storage for logged flow curve datasets
 // Setup for the ItsyBitsy M4 internal QSPI flash
 Adafruit_FlashTransport_QSPI flashTransport;
 Adafruit_SPIFlash flash(&flashTransport);
@@ -91,7 +91,7 @@ Adafruit_SPIFlash flash(&flashTransport);
 FatFileSystem fatfs;
 
 // ============================================================================
-// DATASET EXECUTION LOGGING STRUCTURE (IN RAM)
+// FLOW CURVE DATASET EXECUTION LOGGING STRUCTURE (IN RAM)
 // ============================================================================
 // Log format stored in RAM before it is saved to flash
 struct __attribute__((__packed__)) LogEntry {
@@ -132,7 +132,7 @@ uint32_t runCallTime = 0; // Time elapsed since "RUN" command [µs]
 // Session tracking for saved files
 uint32_t lastSessionCount = 0;
 const char *STATE_FILE = "run_state.txt";       // Stores persistent settings
-const char *DATASET_FILE = "dataset_state.bin"; // Stores last loaded dataset
+const char *DATASET_FILE = "dataset_state.bin"; // Stores last loaded flow curve
 
 // ============================================================================
 // SENSOR CONFIGURATION
@@ -181,9 +181,9 @@ const uint32_t COLOR_READING = 0xFF0040;    // Cyan - taking measurement
 const uint32_t COLOR_LASER = 0x100000;      // Dim blue - started detection
 const uint32_t COLOR_DROPLET = 0xFF0000;    // Bright blue - droplet detected
 const uint32_t COLOR_WAITING = 0x400040;   // Purple - waiting for valve opening
-const uint32_t COLOR_RECEIVING = 0x100000; // Dim red - receiving dataset
+const uint32_t COLOR_RECEIVING = 0x100000; // Dim red - receiving flow curve
 const uint32_t COLOR_EXECUTING =
-    0xFF0000;                        // Bright red - executing loaded dataset
+    0xFF0000;                        // Bright red - executing loaded flow curve
 const uint32_t COLOR_OFF = 0x000000; // Off
 
 // ============================================================================
@@ -281,7 +281,7 @@ void loadPersistentState() {
 }
 
 // ============================================================================
-// DATASET PERSISTENCE (FLASH)
+// FLOW CURVE DATASET PERSISTENCE (FLASH)
 // ============================================================================
 struct __attribute__((__packed__)) DatasetHeader {
   uint32_t count;
@@ -438,12 +438,12 @@ void saveToFlash() {
 void dumpToSerial() {
   // Stream the latest run file over serial
   if (strlen(lastSavedFilename) == 0) {
-    printError("No dataset saved yet!");
+    printError("No flow curve dataset saved yet!");
     return;
   }
 
   if (!fatfs.exists(lastSavedFilename)) {
-    printError("Last dataset file not found in flash!");
+    printError("Last flow curve dataset file not found in flash!");
     return;
   }
 
@@ -688,7 +688,7 @@ float readPhotodetector() {
 }
 
 void resetDataArrays() {
-  // Clear all dataset buffers and indices
+  // Clear all flow curve dataset buffers and indices
   memset(time_array, 0, sizeof(time_array));
   memset(value_array, 0, sizeof(value_array));
   memset(sol_enable_array, 0, sizeof(sol_enable_array));
@@ -771,7 +771,7 @@ void loop() {
   static uint32_t detectionStartTime =
       0;                           // When laser/detection was started [µs]
   static bool isExecuting = false; // Tracks if waiting to run loaded sequence
-  static bool dropletRunEnabled = false; // True: detect then run dataset
+  static bool dropletRunEnabled = false; // True: detect then run flow curve
   static bool setPressure =
       pressureInitializedFromFlash; // Tracks if pressure regulator has been set
   static bool laserTestActive = false;    // Laser test mode on/off
@@ -780,7 +780,7 @@ void loop() {
   auto startDropletDetection = [&](bool runAfterDetection) -> bool {
     // Validate prerequisites before arming detection
     if (runAfterDetection && dataIndex == 0) {
-      printError("Dataset is empty! Upload first using L command.");
+      printError("Flow curve dataset is empty! Upload first using L command.");
       return false;
     }
     if (runAfterDetection && !setPressure) {
@@ -808,6 +808,85 @@ void loop() {
     detectionStartTime = micros();
     DEBUG_PRINTLN("Detecting droplets (primed to cough)");
     return true;
+  };
+
+  auto processDropletDetection = [&]() -> bool {
+    // Returns true when the current loop iteration should exit early
+    // (used after hard PDA fault handling).
+    if (!detectingDroplet) {
+      return false;
+    }
+
+    // Step 1: enforce dead-time after arming/re-arming before reading PDA.
+    uint32_t elapsedSinceStart = micros() - detectionStartTime;
+    if (elapsedSinceStart < pda_delay) {
+      return false;
+    }
+
+    // Step 2: acquire the current photodetector voltage.
+    float signalVoltage = readPhotodetector();
+
+    // Step 3: fail-safe check. Near-zero voltage means detection is unreliable.
+    if (signalVoltage <= PDA_MIN_VALID) {
+      printError("PDA signal too low! Check photodetector or laser power.");
+      stopLaser();
+      detectingDroplet = false;
+      belowThreshold = false;
+      detectionBaselineReady = false;
+      delayedRunPending = false;
+      dropletRunsRemaining = 0;
+      setLedColor(COLOR_IDLE);
+      return true;
+    }
+
+    bool signalBelowThreshold = (signalVoltage < PDA_THR);
+
+    // Step 4: initialize edge-tracking baseline once after each arm/re-arm.
+    // This prevents immediate retrigger if a droplet is still blocking light.
+    if (!detectionBaselineReady) {
+      belowThreshold = signalBelowThreshold;
+      detectionBaselineReady = true;
+      return false;
+    }
+
+    // Step 5: detect only a true falling edge (high -> low).
+    bool fallingEdgeDetected = (!belowThreshold && signalBelowThreshold);
+    if (!fallingEdgeDetected) {
+      // Keep edge state synchronized while waiting for next droplet.
+      belowThreshold = signalBelowThreshold;
+      return false;
+    }
+
+    // Step 6: droplet event accepted. Stop laser and publish event.
+    belowThreshold = true;
+    if (dropletRunsRemaining > 0) {
+      dropletRunsRemaining--;
+    }
+
+    stopLaser();
+    detectingDroplet = false;
+
+    setLedColor(COLOR_DROPLET);
+    Serial.println("DROPLET_DETECTED");
+
+    // Step 7: choose post-detection action based on selected mode.
+    if (dropletRunEnabled) {
+      // Detect-and-run mode: start pre-run wait timer.
+      delayedRunPending = true;
+      delayedRunStartTime = micros();
+    } else if (dropletRunsRemaining != 0) {
+      // Detect-only multi mode: immediately re-arm; pda_delay still applies
+      // because processDropletDetection() always waits before sampling.
+      if (!startDropletDetection(false)) {
+        dropletRunsRemaining = 0;
+        setLedColor(COLOR_IDLE);
+      }
+    } else {
+      // Detect-only single/final event: return to idle indication.
+      setLedColor(COLOR_IDLE);
+    }
+
+    return false;
   };
 
   // -------------------------------------------------------------------------
@@ -847,71 +926,14 @@ void loop() {
   // -------------------------------------------------------------------------
   // Droplet detection monitoring
   // -------------------------------------------------------------------------
-  // When armed, wait for photodetector delay and watch for threshold crossing
-  if (detectingDroplet) {
-    uint32_t elapsedSinceStart = micros() - detectionStartTime;
-
-    // Only start checking photodiode after the configured delay
-    if (elapsedSinceStart >= pda_delay) {
-      float signalVoltage = readPhotodetector();
-
-      // If signal is near zero, assume PDA power is off -> abort detection
-      if (signalVoltage <= PDA_MIN_VALID) {
-        printError("PDA signal too low! Check photodetector or laser power.");
-        stopLaser();
-        detectingDroplet = false;
-        belowThreshold = false;
-        detectionBaselineReady = false;
-        delayedRunPending = false;
-        dropletRunsRemaining = 0;
-        setLedColor(COLOR_IDLE);
-        return;
-      }
-
-      bool signalBelowThreshold = (signalVoltage < PDA_THR);
-
-      // First valid sample after arm/re-arm initializes edge state only
-      if (!detectionBaselineReady) {
-        belowThreshold = signalBelowThreshold;
-        detectionBaselineReady = true;
-      }
-
-      // Falling edge: droplet detected (signal drops below threshold)
-      if (detectionBaselineReady && !belowThreshold && signalBelowThreshold) {
-        belowThreshold = true;
-        if (dropletRunsRemaining > 0) {
-          dropletRunsRemaining--;
-        }
-
-        // Turn off laser immediately when droplet is detected
-        stopLaser();
-        detectingDroplet = false;
-
-        setLedColor(COLOR_DROPLET);
-        Serial.println("DROPLET_DETECTED");
-
-        if (dropletRunEnabled) {
-          delayedRunPending = true;
-          delayedRunStartTime = micros();
-        } else if (dropletRunsRemaining != 0) {
-          if (!startDropletDetection(false)) {
-            dropletRunsRemaining = 0;
-            setLedColor(COLOR_IDLE);
-          }
-        } else {
-          setLedColor(COLOR_IDLE);
-        }
-      } else {
-        // Keep edge state updated while waiting for next falling edge
-        belowThreshold = signalBelowThreshold;
-      }
-    }
+  if (processDropletDetection()) {
+    return;
   }
 
   // -------------------------------------------------------------------------
-  // Handle delayed dataset start after droplet detection/R command
+  // Handle delayed flow curve start after droplet detection/R command
   // -------------------------------------------------------------------------
-  // Wait for the configured pre-trigger delay before starting the dataset
+  // Wait for configured pre-trigger delay before starting flow curve dataset
   if (delayedRunPending) {
     uint32_t elapsed = micros() - delayedRunStartTime;
 
@@ -1081,16 +1103,16 @@ void loop() {
       DEBUG_PRINTLN(
           "Q       - Delete logged CSV files (experiment_dataset_*.csv)");
       DEBUG_PRINTLN("Q!      - Q + clear persisted state and dataset");
-      DEBUG_PRINTLN("[Dataset Handling]");
-      DEBUG_PRINTLN("L <N> <duration_ms> <csv> - Load dataset. CSV format: "
+      DEBUG_PRINTLN("[Flow curve dataset Handling]");
+      DEBUG_PRINTLN("L <N> <duration_ms> <csv> - Load flow curve. CSV format: "
                     "<ms0>,<mA0>,<e0>,<ms1>,<mA1>,<e1>,...,<msN>,<mAN>,<eN>");
-      DEBUG_PRINTLN("L?      - Show loaded dataset status");
+      DEBUG_PRINTLN("L?      - Show loaded flow curve status");
       DEBUG_PRINTLN("[Cough]");
-      DEBUG_PRINTLN("R       - Run the loaded dataset");
-      DEBUG_PRINTLN("D       - Droplet-detect only (continuous)");
+      DEBUG_PRINTLN("R       - Run the loaded flow curve dataset");
+      DEBUG_PRINTLN("D       - Droplet-detect only (cont.)");
       DEBUG_PRINTLN("D <n>   - Droplet-detect only n times then stop");
-      DEBUG_PRINTLN("D!      - Droplet-detect then run dataset (continuous)");
-      DEBUG_PRINTLN("D! <n>  - Droplet-detect then run dataset n times");
+      DEBUG_PRINTLN("D!      - Droplet-detect then run flow curve (cont.)");
+      DEBUG_PRINTLN("D! <n>  - Droplet-detect then run flow curve n times");
 
       // ---------------------------------------------------------------------
       // Control hardware
@@ -1262,7 +1284,7 @@ void loop() {
       Serial.println("LOGS_CLEARED");
 
       // ---------------------------------------------------------------------
-      // Dataset handling
+      // Flow curve dataset handling
       // ---------------------------------------------------------------------
     } else if (strncmp(command, "L", 1) == 0 &&
                strncmp(command, "L?", 2) != 0) {

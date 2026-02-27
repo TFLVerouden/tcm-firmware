@@ -37,7 +37,7 @@ Commands are ASCII lines terminated by newline (\n). Units are noted per command
 - `Q`: Delete logged CSV files matching `experiment_dataset_*.csv`. Replies `LOGS_CLEARED`.
 - `Q!`: `Q` plus clear persisted state/dataset files. Replies `MEMORY_CLEARED`.
 
-### Dataset Handling
+### Flow curve dataset Handling
 
 - `L <N> <duration_ms> <csv>`: Load dataset. CSV format: `<ms0>,<mA0>,<e0>,<ms1>,<mA1>,<e1>,...,<msN>,<mAN>,<eN>`. Replies `DATASET_RECEIVED` and `DATASET_SAVED`.
 - `L?`: Show loaded dataset status. Replies `NO_DATASET` or `DATASET: <lines> LINES AND <duration_ms> MS`.
