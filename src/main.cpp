@@ -207,7 +207,20 @@ void recordEvent(int8_t v1, float v2, float press) {
 
 float pressureBarToCurrent(float bar) {
   // Convert requested pressure [bar] to regulator current [mA]
-  return (bar + 2.48821429f) / 0.62242857f;
+  // Uses the pressure-regulator setpoint calibration.
+  constexpr float PRESSURE_SETPOINT_BAR_OFFSET = 2.48821429f;
+  constexpr float PRESSURE_SETPOINT_BAR_PER_mA = 0.62242857f;
+  return (bar + PRESSURE_SETPOINT_BAR_OFFSET) /
+         PRESSURE_SETPOINT_BAR_PER_mA;
+}
+
+float pressureCurrentToBar(float current_mA) {
+  // Convert measured sensor current [mA] to pressure [bar]
+  // Uses the pressure-sensor readback calibration.
+  constexpr float PRESSURE_READBACK_BAR_PER_mA = 0.6151645155919202f;
+  constexpr float PRESSURE_READBACK_BAR_OFFSET = -2.5128908254187095f;
+  return PRESSURE_READBACK_BAR_PER_mA * current_mA +
+         PRESSURE_READBACK_BAR_OFFSET;
 }
 
 // ============================================================================
@@ -563,9 +576,8 @@ void openSolValve() {
   PORT->Group[g_APinDescription[PIN_VALVE].ulPort].OUTSET.reg =
       (1 << g_APinDescription[PIN_VALVE].ulPin);
 
-  recordEvent(1, -1,
-              0.6151645155919202 * R_click.get_EMA_mA() -
-                  2.5128908254187095); // Log valve open event
+  recordEvent(1, -1, pressureCurrentToBar(R_click.get_EMA_mA()));
+  // Log valve open event
 }
 
 void trigOut() {
@@ -581,9 +593,8 @@ void closeSolValve() {
   PORT->Group[g_APinDescription[PIN_VALVE].ulPort].OUTCLR.reg =
       (1 << g_APinDescription[PIN_VALVE].ulPin);
 
-  recordEvent(0, -1,
-              0.6151645155919202 * R_click.get_EMA_mA() -
-                  2.5128908254187095); // Log valve close event
+  recordEvent(0, -1, pressureCurrentToBar(R_click.get_EMA_mA()));
+  // Log valve close event
 
   DEBUG_PRINTLN("SOLENOID_VALVE_CLOSED"); // Valve closed confirmation (debug
                                           // only for speed)
@@ -647,8 +658,7 @@ void readPressure(bool valveOpen) {
   // where I is the 4-20mA current output
   setLedColor(COLOR_READING); // Show color during reading
   Serial.print("P");
-  Serial.println(0.6151645155919202 * R_click.get_EMA_mA() -
-                 2.5128908254187095);
+  Serial.println(pressureCurrentToBar(R_click.get_EMA_mA()));
 
   // Restore LED color based on valve state
   setLedColor(valveOpen ? COLOR_VALVE_OPEN : COLOR_IDLE);
@@ -1006,9 +1016,8 @@ void loop() {
 
       // Proportional valve follows mA column regardless of solenoid enable
       valve.set_mA(value_array[sequenceIndex]);
-      recordEvent(-1, value_array[sequenceIndex],
-                  0.6151645155919202 * R_click.get_EMA_mA() -
-                      2.5128908254187095);
+        recordEvent(-1, value_array[sequenceIndex],
+              pressureCurrentToBar(R_click.get_EMA_mA()));
 
       // Solenoid enable controls solenoid and trigger
       if (enable && !solValveOpen) {
@@ -1109,8 +1118,7 @@ void loop() {
       DEBUG_PRINT("Pressure (raw): ");
       DEBUG_PRINT(R_click.get_EMA_mA());
       DEBUG_PRINT("Pressure (bar): ");
-      DEBUG_PRINTLN(0.6151645155919202 * R_click.get_EMA_mA() -
-                    2.5128908254187095);
+      DEBUG_PRINTLN(pressureCurrentToBar(R_click.get_EMA_mA()));
       DEBUG_PRINTLN(" mA");
       DEBUG_PRINT("Uptime: ");
       DEBUG_PRINT(millis() / 1000);
