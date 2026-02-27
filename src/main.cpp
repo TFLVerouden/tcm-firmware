@@ -810,6 +810,44 @@ void loop() {
     return true;
   };
 
+  auto stopActiveModes = [&](bool setIdleLed = true) {
+    // Centralized teardown for all active operation modes.
+    // Used before mode switches and by emergency/stop commands.
+
+    // Ensure trigger pulse is not left active.
+    if (performingTrigger) {
+      stopTrigger();
+      performingTrigger = false;
+    }
+
+    // Ensure solenoid and proportional valve return to safe defaults.
+    if (solValveOpen) {
+      closeSolValve();
+      solValveOpen = false;
+    }
+    valve.set_mA(default_valve);
+
+    // Stop any active run/detection/test modes.
+    if (detectingDroplet || laserTestActive) {
+      stopLaser();
+    }
+    isExecuting = false;
+    detectingDroplet = false;
+    laserTestActive = false;
+
+    // Reset mode-specific control flags/counters.
+    sequenceIndex = 0;
+    delayedRunPending = false;
+    dropletRunsRemaining = 0;
+    dropletRunEnabled = false;
+    belowThreshold = false;
+    detectionBaselineReady = false;
+
+    if (setIdleLed) {
+      setLedColor(COLOR_IDLE);
+    }
+  };
+
   auto processDropletDetection = [&]() -> bool {
     // Returns true when the current loop iteration should exit early
     // (used after hard PDA fault handling).
@@ -1180,24 +1218,8 @@ void loop() {
 
     } else if (strncmp(command, "C", 1) == 0) {
       // Command: C
-      // Manually close solenoid valve and stop any active run/detection
-      if (solValveOpen) {
-        closeSolValve();
-        solValveOpen = false;
-      }
-      valve.set_mA(default_valve);
-      if (isExecuting) {
-        isExecuting = false;
-        sequenceIndex = 0;
-      }
-      if (detectingDroplet) {
-        stopLaser();
-        detectingDroplet = false;
-        detectionBaselineReady = false;
-      }
-      delayedRunPending = false;
-      dropletRunsRemaining = 0;
-      setLedColor(COLOR_IDLE);
+      // Manually stop all active modes and return outputs to safe state
+      stopActiveModes(true);
       Serial.println("SOLENOID_CLOSED");
 
     } else if (strncmp(command, "A", 1) == 0) {
@@ -1211,13 +1233,8 @@ void loop() {
 
       bool enableLaser = (enable == 1);
       if (enableLaser && !laserTestActive) {
-        if (detectingDroplet) {
-          detectingDroplet = false;
-          belowThreshold = false;
-          detectionBaselineReady = false;
-          delayedRunPending = false;
-        }
-        dropletRunsRemaining = 0;
+        // Laser test is exclusive: stop other modes first.
+        stopActiveModes(false);
         startLaser();
         setLedColor(COLOR_LASER);
         laserTestActive = true;
@@ -1419,6 +1436,9 @@ void loop() {
       } else if (!setPressure) {
         printError("Pressure regulator not set! Set it first using P command.");
       } else {
+        // Ensure clean transition from any other mode into direct run mode.
+        stopActiveModes(false);
+
         // New session: clear old files and reset counters
         startRunSession();
         delayedRunPending = (pre_trigger_delay_us > 0);
@@ -1451,6 +1471,8 @@ void loop() {
         }
       }
 
+      // Ensure clean transition from any other mode into droplet mode.
+      stopActiveModes(false);
       dropletRunsRemaining = requestedCount;
       // New session: clear old files and reset counters
       startRunSession();
@@ -1475,6 +1497,8 @@ void loop() {
         }
       }
 
+      // Ensure clean transition from any other mode into droplet mode.
+      stopActiveModes(false);
       dropletRunsRemaining = requestedCount;
       if (!startDropletDetection(false)) {
         dropletRunsRemaining = 0;
