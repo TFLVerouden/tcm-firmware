@@ -723,8 +723,8 @@ void resetDataArrays() {
   memset(value_array, 0, sizeof(value_array));
   memset(sol_enable_array, 0, sizeof(sol_enable_array));
   incomingCount = 0;
-  // Todo: Review if these resets are necessary
-  // Added these three resets after testing, need reviewing!
+  // Keep metadata and execution index in sync with cleared buffers.
+  // Prevents stale dataset status after parse failures/clear operations.
   dataIndex = 0;
   sequenceIndex = 0;
   datasetDuration = 0;
