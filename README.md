@@ -40,7 +40,12 @@ Commands are ASCII lines terminated by newline (\n). Units are noted per command
 
 ### Flow curve dataset Handling
 
-- `L <N> <duration_ms> <csv>`: Load dataset. CSV format: `<ms0>,<mA0>,<e0>,<ms1>,<mA1>,<e1>,...,<msN>,<mAN>,<eN>`. Replies `DATASET_RECEIVED` and `DATASET_SAVED`.
+- `L <N> <duration_ms> <csv>`: Load dataset. CSV format: `<ms0>,<mA0>,<e0>,<t0>,<ms1>,<mA1>,<e1>,<t1>,...,<msN>,<mAN>,<eN>,<tN>`.
+	- `e` = solenoid enable (0/1)
+	- `t` = trigger event (0/1)
+	- Trigger is decoupled from solenoid state: `t=1` starts a trigger pulse at that timestamp, independent of valve open/close.
+	- Trigger pulse width is a firmware constant (`TRIGGER_WIDTH` in `main.cpp`).
+	Replies `DATASET_RECEIVED` and `DATASET_SAVED`.
 - `L?`: Show loaded dataset status. Replies `NO_DATASET` or `DATASET: <lines> LINES AND <duration_ms> MS`.
 
 ### Cough

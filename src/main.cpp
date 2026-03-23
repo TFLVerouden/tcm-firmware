@@ -78,9 +78,10 @@ const uint16_t CMD_BUF_LEN =
     32000;                       // RAM size allocation for Serial buffer size
 int incomingCount = 0;           // Declare incoming dataset length globally
 char cmd_buf[CMD_BUF_LEN]{'\0'}; // Instantiate empty Serial buffer
-uint32_t time_array[MAX_DATA_LENGTH];      // Time dataset
-float value_array[MAX_DATA_LENGTH];        // mA dataset
-uint8_t sol_enable_array[MAX_DATA_LENGTH]; // 0/1: solenoid enable
+uint32_t time_array[MAX_DATA_LENGTH];       // Time dataset
+float value_array[MAX_DATA_LENGTH];         // mA dataset
+uint8_t sol_enable_array[MAX_DATA_LENGTH];  // 0/1: solenoid enable
+uint8_t trig_enable_array[MAX_DATA_LENGTH]; // 0/1: trigger pulse event
 // Create DvG_StreamCommand object on Serial stream
 DvG_StreamCommand sc(Serial, cmd_buf, CMD_BUF_LEN);
 
@@ -317,15 +318,23 @@ void loadPersistentState() {
 // FLOW CURVE DATASET PERSISTENCE (FLASH)
 // ============================================================================
 struct __attribute__((__packed__)) DatasetHeader {
+  uint32_t magic;
   uint32_t count;
   uint32_t duration_ms;
+  uint8_t format_version;
 };
 
 struct __attribute__((__packed__)) DatasetRow {
   uint32_t time_ms;
   float value_mA;
   uint8_t enable;
+  uint8_t trigger;
 };
+
+const uint32_t DATASET_MAGIC = 0x54434D46; // "TCMF"
+// Bump when DatasetHeader/DatasetRow layout changes.
+// Current version (2) adds the trigger column to each row.
+const uint8_t DATASET_FORMAT_VERSION = 2;
 
 bool saveDatasetToFlash() {
   if (dataIndex <= 0) {
@@ -342,8 +351,9 @@ bool saveDatasetToFlash() {
     return false;
   }
 
-  DatasetHeader header{static_cast<uint32_t>(dataIndex),
-                       static_cast<uint32_t>(datasetDuration)};
+  DatasetHeader header{DATASET_MAGIC, static_cast<uint32_t>(dataIndex),
+                       static_cast<uint32_t>(datasetDuration),
+                       DATASET_FORMAT_VERSION};
   if (file.write(reinterpret_cast<const uint8_t *>(&header), sizeof(header)) !=
       sizeof(header)) {
     printError("Error writing dataset header!");
@@ -352,7 +362,8 @@ bool saveDatasetToFlash() {
   }
 
   for (int i = 0; i < dataIndex; i++) {
-    DatasetRow row{time_array[i], value_array[i], sol_enable_array[i]};
+    DatasetRow row{time_array[i], value_array[i], sol_enable_array[i],
+                   trig_enable_array[i]};
     if (file.write(reinterpret_cast<const uint8_t *>(&row), sizeof(row)) !=
         sizeof(row)) {
       printError("Error writing dataset row!");
@@ -390,6 +401,16 @@ bool loadDatasetFromFlash() {
     return false;
   }
 
+  // Reject datasets that are not ours (magic mismatch) or that were written
+  // with a different row/header schema (version mismatch).
+  // This prevents mis-parsing stale/corrupt files after protocol changes.
+  if (header.magic != DATASET_MAGIC ||
+      header.format_version != DATASET_FORMAT_VERSION) {
+    printError("Dataset format mismatch! Re-upload flow curve.");
+    file.close();
+    return false;
+  }
+
   for (uint32_t i = 0; i < header.count; i++) {
     DatasetRow row{};
     if (file.read(reinterpret_cast<uint8_t *>(&row), sizeof(row)) !=
@@ -401,6 +422,7 @@ bool loadDatasetFromFlash() {
     time_array[i] = row.time_ms;
     value_array[i] = row.value_mA;
     sol_enable_array[i] = row.enable;
+    trig_enable_array[i] = row.trigger;
   }
 
   incomingCount = static_cast<int>(header.count);
@@ -722,6 +744,7 @@ void resetDataArrays() {
   memset(time_array, 0, sizeof(time_array));
   memset(value_array, 0, sizeof(value_array));
   memset(sol_enable_array, 0, sizeof(sol_enable_array));
+  memset(trig_enable_array, 0, sizeof(trig_enable_array));
   incomingCount = 0;
   // Keep metadata and execution index in sync with cleared buffers.
   // Prevents stale dataset status after parse failures/clear operations.
@@ -1054,6 +1077,10 @@ void loop() {
     sequenceIndex = 0;
     solValveOpen = false;
     valve.set_mA(default_valve);
+    if (performingTrigger) {
+      stopTrigger();
+      performingTrigger = false;
+    }
 
     setLedColor(COLOR_EXECUTING);
     Serial.println("EXECUTING_DATASET");
@@ -1080,23 +1107,28 @@ void loop() {
     // Apply all dataset points that are due
     while (sequenceIndex < dataIndex && now_ms >= time_array[sequenceIndex]) {
       uint8_t enable = sol_enable_array[sequenceIndex];
+      uint8_t trigger = trig_enable_array[sequenceIndex];
 
       // Proportional valve follows mA column regardless of solenoid enable
       valve.set_mA(value_array[sequenceIndex]);
       recordEvent(-1, value_array[sequenceIndex],
                   pressureCurrentToBar(R_click.get_EMA_mA()));
 
-      // Solenoid enable controls solenoid and trigger
+      // Solenoid enable controls only the solenoid valve state
       if (enable && !solValveOpen) {
-        trigOut();
-        openSolValve(); // This gives ~5 us delay
-        performingTrigger = true;
+        openSolValve();
         solValveOpen = true;
-        tick = micros();
         setLedColor(COLOR_VALVE_OPEN);
       } else if (!enable && solValveOpen) {
         closeSolValve();
         solValveOpen = false;
+      }
+
+      // Trigger column controls trigger pulses independently of solenoid state
+      if (trigger) {
+        trigOut();
+        performingTrigger = true;
+        tick = micros();
       }
 
       sequenceIndex++;
@@ -1367,8 +1399,8 @@ void loop() {
       DEBUG_PRINTLN("V <mA>  - Set proportional valve current in mA");
       DEBUG_PRINTLN("P <bar> - Set pressure regulator in bar");
       DEBUG_PRINTLN("O       - Open solenoid valve");
-        DEBUG_PRINTLN("C       - Close solenoid valve");
-        DEBUG_PRINTLN("Q       - Quit active modes and return to idle");
+      DEBUG_PRINTLN("C       - Close solenoid valve");
+      DEBUG_PRINTLN("Q       - Quit active modes and return to idle");
       DEBUG_PRINTLN("A <0|1> - Laser test mode off/on (streams photodiode "
                     "readings when on)");
       DEBUG_PRINTLN("[Read Out Sensors]");
@@ -1379,10 +1411,13 @@ void loop() {
       DEBUG_PRINTLN("W?      - Read current wait before run in microseconds");
       DEBUG_PRINTLN(
           "X       - Delete logged CSV files (experiment_dataset_*.csv)");
-        DEBUG_PRINTLN("X!      - X + clear persisted state and dataset");
+      DEBUG_PRINTLN("X!      - X + clear persisted state and dataset");
       DEBUG_PRINTLN("[Flow curve dataset Handling]");
       DEBUG_PRINTLN("L <N> <duration_ms> <csv> - Load flow curve. CSV format: "
-                    "<ms0>,<mA0>,<e0>,<ms1>,<mA1>,<e1>,...,<msN>,<mAN>,<eN>");
+                    "<ms0>,<mA0>,<e0>,<t0>,<ms1>,<mA1>,<e1>,<t1>,...,<msN>,<"
+                    "mAN>,<eN>,<tN>");
+      DEBUG_PRINTLN("         where e=solenoid enable (0/1), t=trigger event "
+                    "(0/1), and trigger pulse width is fixed in firmware");
       DEBUG_PRINTLN("L?      - Show loaded flow curve status");
       DEBUG_PRINTLN("[Cough]");
       DEBUG_PRINTLN("R       - Run the loaded flow curve dataset");
@@ -1478,7 +1513,8 @@ void loop() {
         closeSolValve();
         solValveOpen = false;
       }
-      setLedColor(mode == LoopMode::ExecutingRun ? COLOR_EXECUTING : COLOR_IDLE);
+      setLedColor(mode == LoopMode::ExecutingRun ? COLOR_EXECUTING
+                                                 : COLOR_IDLE);
       Serial.println("SOLENOID_CLOSED");
       break;
 
@@ -1533,8 +1569,8 @@ void loop() {
 
     case CommandId::LoadDataset: {
       // Parse incoming dataset. Command: "L <N_datapoints>
-      // <Time0>,<mA0>,<E0>,<Time1>,<mA1>,<E1>,...,<TimeN>,<mAN>,<EN>"
-      // where E is 0/1 solenoid enable.
+      // <Time0>,<mA0>,<E0>,<T0>,<Time1>,<mA1>,<E1>,<T1>,...,<TimeN>,<mAN>,<EN>,<TN>"
+      // where E is 0/1 solenoid enable and T is 0/1 trigger event.
 
       setLedColor(COLOR_RECEIVING);
 
@@ -1564,7 +1600,7 @@ void loop() {
 
       dataIndex = 0; // Used later to only read valuable data from data arrays
 
-      // Step 2: parse all CSV triples into runtime arrays.
+      // Step 2: parse all CSV quadruples into runtime arrays.
       // Parsing rest of the dataset after handshake
       for (int i = 0; i < incomingCount; i++) {
 
@@ -1606,8 +1642,13 @@ void loop() {
           break;
         }
 
-        int enableInt = atoi(idx);
-        if (enableInt != 0 && enableInt != 1) {
+        int enableInt = -1;
+        if (strcmp(idx, "0") == 0) {
+          enableInt = 0;
+        } else if (strcmp(idx, "1") == 0) {
+          enableInt = 1;
+        }
+        if (enableInt == -1) {
           printError("Enable flag must be 0 or 1. Upload new dataset! Error at "
                      "data index",
                      dataIndex);
@@ -1616,13 +1657,40 @@ void loop() {
         }
         sol_enable_array[i] = (uint8_t)enableInt;
 
+        idx = strtok(NULL, delim); // Get next csv buffer index: trigger flag
+        if (idx == NULL) {
+          printError("Token was NULL, breaking CSV parsing. Upload new "
+                     "dataset! Error at data index",
+                     dataIndex);
+          resetDataArrays();
+          break;
+        }
+
+        int triggerInt = -1;
+        if (strcmp(idx, "0") == 0) {
+          triggerInt = 0;
+        } else if (strcmp(idx, "1") == 0) {
+          triggerInt = 1;
+        }
+        if (triggerInt == -1) {
+          printError(
+              "Trigger flag must be 0 or 1. Upload new dataset! Error at "
+              "data index",
+              dataIndex);
+          resetDataArrays();
+          break;
+        }
+        trig_enable_array[i] = (uint8_t)triggerInt;
+
         // Debug print whole received dataset
         DEBUG_PRINT("Timestamp: ");
         DEBUG_PRINT(time_array[i]);
         DEBUG_PRINT(", mA: ");
         DEBUG_PRINT(value_array[i]);
         DEBUG_PRINT(", enable: ");
-        DEBUG_PRINTLN(sol_enable_array[i]);
+        DEBUG_PRINT(sol_enable_array[i]);
+        DEBUG_PRINT(", trigger: ");
+        DEBUG_PRINTLN(trig_enable_array[i]);
 
         // Increase working index, used later to only read valuable data from
         // data arrays
@@ -1683,6 +1751,10 @@ void loop() {
           sequenceIndex = 0;
           solValveOpen = false;
           valve.set_mA(default_valve);
+          if (performingTrigger) {
+            stopTrigger();
+            performingTrigger = false;
+          }
           setLedColor(COLOR_EXECUTING);
           Serial.println("STARTING_RUN");
         }
