@@ -26,6 +26,13 @@
 #include <Arduino.h>
 
 // ============================================================================
+// HOST <-> MCU PROTOCOL VERSIONING
+// ============================================================================
+// Versioned serial contract used by host software to enforce compatibility.
+// Keep this as a single integer and bump only on breaking serial changes.
+const uint8_t TCM_PROTOCOL_VERSION = 4;
+
+// ============================================================================
 // FORWARD DECLARATIONS
 // ============================================================================
 void printError(const char *message);
@@ -475,6 +482,7 @@ void saveToFlash() {
   if (file) {
     // Add run metadata and logged data rows
     file.printf("run_nr,%lu\n", static_cast<unsigned long>(runCounter));
+    file.printf("protocol_version,%u\n", TCM_PROTOCOL_VERSION);
     file.printf("trigger_t0_us,%lu\n", tick);
     // file.println("us,v1 action,v2 set mA,bar"); // Header
     file.println("time_us,sol_valve_action,prop_valve_ma,press_bar"); // Header
@@ -1211,6 +1219,7 @@ void loop() {
 
     enum class CommandId : uint8_t {
       IdQuery,
+      ProtocolVersionQuery,
       DebugToggle,
       StatusQuery,
       Help,
@@ -1238,6 +1247,8 @@ void loop() {
       // Preserve matching precedence for overlapping prefixes
       if (strncmp(cmd, "id?", 3) == 0)
         return CommandId::IdQuery;
+      if (strncmp(cmd, "ver?", 4) == 0)
+        return CommandId::ProtocolVersionQuery;
       if (strncmp(cmd, "S?", 2) == 0)
         return CommandId::StatusQuery;
       if (strncmp(cmd, "P?", 2) == 0)
@@ -1335,6 +1346,11 @@ void loop() {
       Serial.println("TCM_control");
       break;
 
+    case CommandId::ProtocolVersionQuery:
+      Serial.print("PROTO ");
+      Serial.println(TCM_PROTOCOL_VERSION);
+      break;
+
     case CommandId::DebugToggle: {
       int enable = parseIntInString(command, 1);
       if (enable != 0 && enable != 1) {
@@ -1392,6 +1408,7 @@ void loop() {
       DEBUG_PRINTLN("\n=== Available Commands ===");
       DEBUG_PRINTLN("[Connection & Debugging]");
       DEBUG_PRINTLN("id?     - Show device ID for auto serial connection");
+      DEBUG_PRINTLN("ver?    - Show protocol version");
       DEBUG_PRINTLN("B <0|1> - Toggle debug output");
       DEBUG_PRINTLN("S?      - Show system status (debug only)");
       DEBUG_PRINTLN("?       - Show the on-device help menu");

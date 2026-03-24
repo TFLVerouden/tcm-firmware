@@ -13,6 +13,8 @@ Commands are ASCII lines terminated by newline (\n). Units are noted per command
 ### Connection & Debugging
 
 - `id?`: Show device ID for auto serial connection. Replies `TCM_control`.
+- `ver?`: Show serial protocol version. Replies `PROTO <integer>`.
+- Protocol policy: host and MCU protocol versions must match exactly. Increase this integer only for breaking serial changes.
 - `B <0|1>`: Toggle debug output. Replies `DEBUG_ON` or `DEBUG_OFF`.
 - `S?`: Show system status (debug only). Replies a block delimited by `STATUS_BEGIN` and `STATUS_END`.
 - `?`: Show the on-device help menu.
@@ -65,7 +67,7 @@ Commands are ASCII lines terminated by newline (\n). Units are noted per command
 
 Run logs can be stored in QSPI flash. Serial output can be captured to the [logs](logs/) folder. When logs are streamed, output is wrapped by `START_OF_FILE <filename>` and `END_OF_FILE` markers.
 
-In the file header, the run number (only relevant when doing multi-droplet runs) and the trigger time (in us) are output. The body contains four columns:
+In the file header, the run number (only relevant when doing multi-droplet runs), protocol version, and trigger time (in us) are output. The body contains four columns:
 1. Time stamp (us)
 2. Solenoid valve action (0 if closed at that time stamp, 1 if opened at that time stamp, -1 if unchanged at that time stamp)
 3. Proportional valve current (mA, in range 12-20, or -1 if unchanged at that time stamp)
@@ -79,6 +81,7 @@ FINISHED
 SAVED_TO_FLASH
 START_OF_FILE experiment_log_0001.csv
 run_nr,1
+protocol_version,4
 trigger_t0_us,149580895
 time_us,sol_valve_action,prop_valve_ma,press_bar
 149580861,-1,0.00,1.49
