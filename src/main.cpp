@@ -1228,6 +1228,7 @@ void loop() {
       OpenSolenoid,
       CloseSolenoid,
       Quit,
+      TriggerOnce,
       LaserTestToggle,
       ReadPressure,
       ReadTempHumidity,
@@ -1275,6 +1276,8 @@ void loop() {
         return CommandId::CloseSolenoid;
       if (strncmp(cmd, "Q", 1) == 0)
         return CommandId::Quit;
+      if (strncmp(cmd, "G", 1) == 0)
+        return CommandId::TriggerOnce;
       if (strncmp(cmd, "A", 1) == 0)
         return CommandId::LaserTestToggle;
       if (strncmp(cmd, "W", 1) == 0)
@@ -1418,6 +1421,7 @@ void loop() {
       DEBUG_PRINTLN("O       - Open solenoid valve");
       DEBUG_PRINTLN("C       - Close solenoid valve");
       DEBUG_PRINTLN("Q       - Quit active modes and return to idle");
+      DEBUG_PRINTLN("G       - Send one trigger pulse now");
       DEBUG_PRINTLN("A <0|1> - Laser test mode off/on (streams photodiode "
                     "readings when on)");
       DEBUG_PRINTLN("[Read Out Sensors]");
@@ -1538,6 +1542,13 @@ void loop() {
     case CommandId::Quit:
       stopActiveModes(true);
       Serial.println("RETURNED_TO_IDLE");
+      break;
+
+    case CommandId::TriggerOnce:
+      trigOut();
+      tick = micros();
+      performingTrigger = true;
+      Serial.println("TRIGGER_PULSE_SENT");
       break;
 
     case CommandId::LaserTestToggle: {

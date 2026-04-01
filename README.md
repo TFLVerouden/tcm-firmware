@@ -26,6 +26,7 @@ Commands are ASCII lines terminated by newline (\n). Units are noted per command
 - `O`: Open solenoid valve. Replies `SOLENOID_OPENED`.
 - `C`: Close solenoid valve. Replies `SOLENOID_CLOSED`.
 - `Q`: Quit all active modes and return to idle. Replies `RETURNED_TO_IDLE`.
+- `G`: Send one immediate trigger pulse (width fixed in firmware). Replies `TRIGGER_PULSE_SENT`.
 - `A <0|1>`: Laser test mode off/on (streams photodiode readings when on). Replies `LASER_TEST_ON` or `LASER_TEST_OFF`.
 
 ### Read Out Sensors
