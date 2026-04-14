@@ -182,7 +182,7 @@ Adafruit_SHT4x sht4;
 // Photodetector configuration for droplet detection
 const float PDA_R1 = 6710.0;     // Voltage divider resistor [Ohm]
 const float PDA_R2 = 3260.0;     // Voltage divider resistor [Ohm]
-const float PDA_THR = 4.5;       // Droplet detection threshold [V]
+const float PDA_THR = 4.8;       // Droplet detection threshold [V]
 const float PDA_MIN_VALID = 0.1; // Minimum valid signal [V] (detect PSU off)
 
 // ============================================================================
