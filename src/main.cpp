@@ -73,6 +73,7 @@ const int PIN_PRES_REG = 10;   // Chip select for pressure regulator
 const int PIN_CS_RCLICK = 2;   // Chip select for R-Click pressure sensor (SPI)
 const int PIN_TRIG = 9; // Trigger output for peripheral devices synchronization
 const int PIN_LASER = 12; // Laser MOSFET gate pin for droplet detection
+const int PIN_LIGHT = 5;  // Light output pin (simple on/off)
 const int PIN_PDA = A2;   // Analog input from photodetector
 // Note: PIN_DOTSTAR_DATA and PIN_DOTSTAR_CLK are already defined in variant.h
 
@@ -540,6 +541,7 @@ void setup() {
   pinMode(PIN_CS_RCLICK, INPUT);
   pinMode(PIN_TRIG, OUTPUT);
   pinMode(PIN_LASER, OUTPUT);
+  pinMode(PIN_LIGHT, OUTPUT);
   pinMode(PIN_PDA, INPUT);
 
   // Set all outputs to safe initial state (off)
@@ -547,6 +549,7 @@ void setup() {
   digitalWrite(PIN_VALVE, LOW);
   digitalWrite(PIN_TRIG, LOW);
   digitalWrite(PIN_LASER, LOW);
+  digitalWrite(PIN_LIGHT, LOW);
 
   // Initialize T Clicks (proportional valve and pressure regulator)
   valve.begin();
@@ -1230,6 +1233,7 @@ void loop() {
       Quit,
       TriggerOnce,
       LaserTestToggle,
+      LightToggle,
       ReadPressure,
       ReadTempHumidity,
       WaitSet,
@@ -1280,6 +1284,8 @@ void loop() {
         return CommandId::TriggerOnce;
       if (strncmp(cmd, "A", 1) == 0)
         return CommandId::LaserTestToggle;
+      if (strncmp(cmd, "I", 1) == 0)
+        return CommandId::LightToggle;
       if (strncmp(cmd, "W", 1) == 0)
         return CommandId::WaitSet;
       if (strncmp(cmd, "X", 1) == 0)
@@ -1420,10 +1426,11 @@ void loop() {
       DEBUG_PRINTLN("P <bar> - Set pressure regulator in bar");
       DEBUG_PRINTLN("O       - Open solenoid valve");
       DEBUG_PRINTLN("C       - Close solenoid valve");
-      DEBUG_PRINTLN("Q       - Quit active modes and return to idle");
+      DEBUG_PRINTLN("I <0|1> - Light off/on (pin 5)");
       DEBUG_PRINTLN("G       - Send one trigger pulse now");
       DEBUG_PRINTLN("A <0|1> - Laser test mode off/on (streams photodiode "
                     "readings when on)");
+      DEBUG_PRINTLN("Q       - Quit active modes and return to idle");
       DEBUG_PRINTLN("[Read Out Sensors]");
       DEBUG_PRINTLN("P?      - Read current pressure (bar)");
       DEBUG_PRINTLN("T?      - Read temperature & humidity");
@@ -1584,6 +1591,18 @@ void loop() {
         Serial.println(mode == LoopMode::LaserTest ? "LASER_TEST_ON"
                                                    : "LASER_TEST_OFF");
       }
+      break;
+    }
+
+    case CommandId::LightToggle: {
+      // TODO: Add PWM dimming capability
+      int enable = parseIntInString(command, 1);
+      if (enable != 0 && enable != 1) {
+        printError("I expects 0 or 1!");
+        return;
+      }
+      digitalWrite(PIN_LIGHT, enable ? HIGH : LOW);
+      Serial.println(enable ? "LIGHT_ON" : "LIGHT_OFF");
       break;
     }
 

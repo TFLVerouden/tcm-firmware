@@ -25,9 +25,10 @@ Commands are ASCII lines terminated by newline (\n). Units are noted per command
 - `P <bar>`: Set pressure regulator in bar. Replies `SET_PRESSURE <bar>`.
 - `O`: Open solenoid valve. Replies `SOLENOID_OPENED`.
 - `C`: Close solenoid valve. Replies `SOLENOID_CLOSED`.
-- `Q`: Quit all active modes and return to idle. Replies `RETURNED_TO_IDLE`.
+- `I <0|1>`: Light off/on (pin 5). Replies `LIGHT_ON` or `LIGHT_OFF`.
 - `G`: Send one immediate trigger pulse (width fixed in firmware). Replies `TRIGGER_PULSE_SENT`.
 - `A <0|1>`: Laser test mode off/on (streams photodiode readings when on). Replies `LASER_TEST_ON` or `LASER_TEST_OFF`.
+- `Q`: Quit all active modes and return to idle. Replies `RETURNED_TO_IDLE`.
 
 ### Read Out Sensors
 
