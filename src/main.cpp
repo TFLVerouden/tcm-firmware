@@ -74,6 +74,7 @@ const int PIN_CS_RCLICK = 2;   // Chip select for R-Click pressure sensor (SPI)
 const int PIN_TRIG = 9; // Trigger output for peripheral devices synchronization
 const int PIN_LASER = 12; // Laser MOSFET gate pin for droplet detection
 const int PIN_LIGHT = 5;  // Light output pin (simple on/off)
+const int PIN_FAN = 3;    // Fan speed control pin (PWM, not yet implemented)
 const int PIN_PDA = A2;   // Analog input from photodetector
 // Note: PIN_DOTSTAR_DATA and PIN_DOTSTAR_CLK are already defined in variant.h
 
@@ -542,6 +543,7 @@ void setup() {
   pinMode(PIN_TRIG, OUTPUT);
   pinMode(PIN_LASER, OUTPUT);
   pinMode(PIN_LIGHT, OUTPUT);
+  pinMode(PIN_FAN, OUTPUT);
   pinMode(PIN_PDA, INPUT);
 
   // Set all outputs to safe initial state (off)
@@ -550,6 +552,7 @@ void setup() {
   digitalWrite(PIN_TRIG, LOW);
   digitalWrite(PIN_LASER, LOW);
   digitalWrite(PIN_LIGHT, LOW);
+  digitalWrite(PIN_FAN, LOW);
 
   // Initialize T Clicks (proportional valve and pressure regulator)
   valve.begin();
@@ -1234,6 +1237,7 @@ void loop() {
       TriggerOnce,
       LaserTestToggle,
       LightToggle,
+      FanSpeed,
       ReadPressure,
       ReadTempHumidity,
       WaitSet,
@@ -1286,6 +1290,8 @@ void loop() {
         return CommandId::LaserTestToggle;
       if (strncmp(cmd, "I", 1) == 0)
         return CommandId::LightToggle;
+      if (strncmp(cmd, "F", 1) == 0)
+        return CommandId::FanSpeed;
       if (strncmp(cmd, "W", 1) == 0)
         return CommandId::WaitSet;
       if (strncmp(cmd, "X", 1) == 0)
@@ -1430,6 +1436,7 @@ void loop() {
       DEBUG_PRINTLN("G       - Send one trigger pulse now");
       DEBUG_PRINTLN("A <0|1> - Laser test mode off/on (streams photodiode "
                     "readings when on)");
+      DEBUG_PRINTLN("F <val> - Set fan speed (pin 3, not yet implemented)");
       DEBUG_PRINTLN("Q       - Quit active modes and return to idle");
       DEBUG_PRINTLN("[Read Out Sensors]");
       DEBUG_PRINTLN("P?      - Read current pressure (bar)");
@@ -1591,6 +1598,14 @@ void loop() {
         Serial.println(mode == LoopMode::LaserTest ? "LASER_TEST_ON"
                                                    : "LASER_TEST_OFF");
       }
+      break;
+    }
+
+    case CommandId::FanSpeed: {
+      // TODO: Implement fan speed control on PIN_FAN (pin 3).
+      // Hardware not yet finalised — likely PWM.
+      // Placeholder: accepts a speed value but does nothing.
+      Serial.println("FAN_SPEED_SET");
       break;
     }
 

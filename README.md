@@ -28,6 +28,7 @@ Commands are ASCII lines terminated by newline (\n). Units are noted per command
 - `I <0|1>`: Light off/on (pin 5). Replies `LIGHT_ON` or `LIGHT_OFF`.
 - `G`: Send one immediate trigger pulse (width fixed in firmware). Replies `TRIGGER_PULSE_SENT`.
 - `A <0|1>`: Laser test mode off/on (streams photodiode readings when on). Replies `LASER_TEST_ON` or `LASER_TEST_OFF`.
+- `F <val>`: Set fan speed (pin 3). Not yet implemented in hardware — replies `FAN_SPEED_SET` as a placeholder.
 - `Q`: Quit all active modes and return to idle. Replies `RETURNED_TO_IDLE`.
 
 ### Read Out Sensors
