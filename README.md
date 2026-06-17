@@ -25,7 +25,7 @@ Commands are ASCII lines terminated by newline (\n). Units are noted per command
 - `P <bar>`: Set pressure regulator in bar. Replies `SET_PRESSURE <bar>`.
 - `O`: Open solenoid valve. Replies `SOLENOID_OPENED`.
 - `C`: Close solenoid valve. Replies `SOLENOID_CLOSED`.
-- `I <0|1>`: Light off/on (pin 5). Replies `LIGHT_ON` or `LIGHT_OFF`.
+- `I <level>`: Set light level (pin 5) using normalized PWM in range `0.0..1.0`. Replies `SET_LIGHT <level> DUTY <0-255>`.
 - `G`: Send one immediate trigger pulse (width fixed in firmware). Replies `TRIGGER_PULSE_SENT`.
 - `A <0|1>`: Laser test mode off/on (streams photodiode readings when on). Replies `LASER_TEST_ON` or `LASER_TEST_OFF`.
 - `F <val>`: Set fan speed (pin 3). Not yet implemented in hardware — replies `FAN_SPEED_SET` as a placeholder.
@@ -84,7 +84,7 @@ FINISHED
 SAVED_TO_FLASH
 START_OF_FILE experiment_log_0001.csv
 run_nr,1
-protocol_version,4
+protocol_version,5
 trigger_t0_us,149580895
 time_us,sol_valve_action,prop_valve_ma,press_bar
 149580861,-1,0.00,1.49

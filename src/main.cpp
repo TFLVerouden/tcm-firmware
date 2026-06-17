@@ -24,13 +24,14 @@
 #include <Adafruit_DotStar.h>
 #include <Adafruit_SHT4x.h>
 #include <Arduino.h>
+#include <stdlib.h>
 
 // ============================================================================
 // HOST <-> MCU PROTOCOL VERSIONING
 // ============================================================================
 // Versioned serial contract used by host software to enforce compatibility.
 // Keep this as a single integer and bump only on breaking serial changes.
-const uint8_t TCM_PROTOCOL_VERSION = 4;
+const uint8_t TCM_PROTOCOL_VERSION = 5;
 
 // ============================================================================
 // FORWARD DECLARATIONS
@@ -73,7 +74,7 @@ const int PIN_PRES_REG = 10;   // Chip select for pressure regulator
 const int PIN_CS_RCLICK = 2;   // Chip select for R-Click pressure sensor (SPI)
 const int PIN_TRIG = 9; // Trigger output for peripheral devices synchronization
 const int PIN_LASER = 12; // Laser MOSFET gate pin for droplet detection
-const int PIN_LIGHT = 5;  // Light output pin (simple on/off)
+const int PIN_LIGHT = 5;  // Light output pin (PWM brightness)
 const int PIN_FAN = 3;    // Fan speed control pin (PWM, not yet implemented)
 const int PIN_PDA = A2;   // Analog input from photodetector
 // Note: PIN_DOTSTAR_DATA and PIN_DOTSTAR_CLK are already defined in variant.h
@@ -1432,7 +1433,7 @@ void loop() {
       DEBUG_PRINTLN("P <bar> - Set pressure regulator in bar");
       DEBUG_PRINTLN("O       - Open solenoid valve");
       DEBUG_PRINTLN("C       - Close solenoid valve");
-      DEBUG_PRINTLN("I <0|1> - Light off/on (pin 5)");
+      DEBUG_PRINTLN("I <0..1> - Set light level (pin 5, normalized PWM)");
       DEBUG_PRINTLN("G       - Send one trigger pulse now");
       DEBUG_PRINTLN("A <0|1> - Laser test mode off/on (streams photodiode "
                     "readings when on)");
@@ -1610,14 +1611,42 @@ void loop() {
     }
 
     case CommandId::LightToggle: {
-      // TODO: Add PWM dimming capability
-      int enable = parseIntInString(command, 1);
-      if (enable != 0 && enable != 1) {
-        printError("I expects 0 or 1!");
+      // Command: I <level>
+      // level is normalized PWM duty in [0.0, 1.0].
+      // Backward compatible: legacy I 0 and I 1 are still valid.
+      char *valueStart = command + 1;
+      while (*valueStart == ' ') {
+        valueStart++;
+      }
+
+      if (*valueStart == '\0') {
+        printError("I expects a value in [0.0, 1.0]!");
         return;
       }
-      digitalWrite(PIN_LIGHT, enable ? HIGH : LOW);
-      Serial.println(enable ? "LIGHT_ON" : "LIGHT_OFF");
+
+      char *endPtr = nullptr;
+      double normalized = strtod(valueStart, &endPtr);
+      while (*endPtr == ' ') {
+        endPtr++;
+      }
+
+      if (endPtr == valueStart || *endPtr != '\0') {
+        printError("I expects a numeric value in [0.0, 1.0]!");
+        return;
+      }
+
+      if (normalized < 0.0 || normalized > 1.0) {
+        printError("Light level out of range! Use 0.0 to 1.0.");
+        return;
+      }
+
+      uint8_t duty = (uint8_t)(normalized * 255.0 + 0.5);
+      analogWrite(PIN_LIGHT, duty);
+
+      Serial.print("SET_LIGHT ");
+      Serial.print((float)normalized, 3);
+      Serial.print(" DUTY ");
+      Serial.println((int)duty);
       break;
     }
 
