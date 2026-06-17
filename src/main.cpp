@@ -159,8 +159,8 @@ const float PRESSURE_SETPOINT_BAR_OFFSET = 2.48821429f;
 const float PRESSURE_SETPOINT_BAR_PER_mA = 0.62242857f;
 
 // Sensor readback conversion (measured current [mA] -> pressure [bar])
-const float PRESSURE_READBACK_BAR_PER_mA = 0.6151645155919202f;
-const float PRESSURE_READBACK_BAR_OFFSET = -2.5128908254187095f;
+const float PRESSURE_READBACK_BAR_PER_mA = 0.6255112463192659f;
+const float PRESSURE_READBACK_BAR_OFFSET = -2.534598501736508f;
 
 // ============================================================================
 // PERSISTENCE FILE KEYS + SESSION TRACKING
