@@ -124,7 +124,10 @@ struct __attribute__((__packed__)) LogEntry {
 #define MAX_RECORDS 2000
 LogEntry logs[MAX_RECORDS];
 int currentCount = 0;
-uint32_t runCounter = 0; // Per-session run index (starts at 0 each boot)
+bool runLogActive = false;      // True only while a dataset run is active
+uint32_t runLogTriggerUs = 0;   // First trigger timestamp for current run [us]
+bool runLogTriggerSeen = false; // True once the run-local trigger has fired
+uint32_t runCounter = 0;        // Per-session run index (starts at 0 each boot)
 char lastSavedFilename[32] = ""; // Latest file saved during this session
 float lastPressure_bar = 0.0f;   // Persisted pressure regulator setting [bar]
 bool pressureInitializedFromFlash = false; // Valid persisted pressure loaded
@@ -226,10 +229,35 @@ void setLedColor(uint32_t color) {
   led.setPixelColor(0, color);
   led.show();
 }
+
+void beginRunLog() {
+  // Start a fresh per-run log and ignore any earlier housekeeping events.
+  currentCount = 0;
+  runLogActive = true;
+  runLogTriggerUs = micros();
+  runLogTriggerSeen = false;
+}
+
+void markRunTrigger() {
+  // Keep the first trigger timestamp as the time origin for this run log.
+  if (!runLogActive || runLogTriggerSeen) {
+    return;
+  }
+
+  runLogTriggerUs = micros();
+  runLogTriggerSeen = true;
+}
+
+void endRunLog() { runLogActive = false; }
 // ============================================================================
 // FUNCTION TO STORE EXECUTION EVENTS IN RAM
 // ============================================================================
 void recordEvent(int8_t v1, float v2, float press) {
+  // Only record events that belong to an actively executing flow-curve run.
+  if (!runLogActive) {
+    return;
+  }
+
   // Append a log entry if there is space
   if (currentCount < MAX_RECORDS) {
     logs[currentCount] = {micros(), v1, v2, press};
@@ -482,7 +510,8 @@ void saveToFlash() {
     // Add run metadata and logged data rows
     file.printf("run_nr,%lu\n", static_cast<unsigned long>(runCounter));
     file.printf("protocol_version,%u\n", TCM_PROTOCOL_VERSION);
-    file.printf("trigger_t0_us,%lu\n", tick);
+    file.printf("trigger_t0_us,%lu\n",
+                static_cast<unsigned long>(runLogTriggerUs));
     // file.println("us,v1 action,v2 set mA,bar"); // Header
     file.println("time_us,sol_valve_action,prop_valve_ma,press_bar"); // Header
     for (int i = 0; i < currentCount; i++) {
@@ -494,6 +523,7 @@ void saveToFlash() {
   } else {
     printError("Unable to open file for writing!");
   }
+  endRunLog();
   currentCount = 0; // Reset RAM log count after saving
 }
 
@@ -766,7 +796,7 @@ void resetDataArrays() {
 
 void clearRunCsvFiles() {
   // Remove experiment CSV files from flash
-  const char *csvPrefix = "experiment_dataset_";
+  const char *logPrefix = "experiment_log_";
   File root = fatfs.open("/");
   if (root) {
     File entry = root.openNextFile();
@@ -775,8 +805,11 @@ void clearRunCsvFiles() {
         char name[64];
         if (entry.getName(name, sizeof(name))) {
           size_t nameLen = strlen(name);
-          if (strncmp(name, csvPrefix, strlen(csvPrefix)) == 0 &&
-              nameLen >= 4 && strncmp(name + nameLen - 4, ".csv", 4) == 0) {
+          bool isCsv =
+              (nameLen >= 4 && strncmp(name + nameLen - 4, ".csv", 4) == 0);
+          bool matchesCurrentPrefix =
+              (strncmp(name, logPrefix, strlen(logPrefix)) == 0);
+          if (isCsv && matchesCurrentPrefix) {
             entry.close();
             fatfs.remove(name);
           } else {
@@ -834,6 +867,9 @@ void clearSessionTracking() {
   lastSessionCount = 0;
   lastSavedFilename[0] = '\0';
   currentCount = 0;
+  runLogActive = false;
+  runLogTriggerUs = 0;
+  runLogTriggerSeen = false;
 }
 
 void clearPersistentStateAndDataset() {
@@ -1116,6 +1152,7 @@ void loop() {
     }
 
     mode = LoopMode::ExecutingRun;
+    beginRunLog();
     runCallTime = micros();
 
     // Initialise dataset execution variables
@@ -1172,6 +1209,7 @@ void loop() {
       // Trigger column controls trigger pulses independently of solenoid state
       if (trigger) {
         trigOut();
+        markRunTrigger();
         performingTrigger = true;
         tick = micros();
       }
@@ -1476,8 +1514,7 @@ void loop() {
       DEBUG_PRINTLN("[Configuration]");
       DEBUG_PRINTLN("W <us>  - Set wait before run in microseconds");
       DEBUG_PRINTLN("W?      - Read current wait before run in microseconds");
-      DEBUG_PRINTLN(
-          "X       - Delete logged CSV files (experiment_dataset_*.csv)");
+      DEBUG_PRINTLN("X       - Delete logged CSV files (experiment_log_*.csv)");
       DEBUG_PRINTLN("X!      - X + clear persisted state and dataset");
       DEBUG_PRINTLN("[Flow curve dataset Handling]");
       DEBUG_PRINTLN("L <N> <duration_ms> <csv> - Load flow curve. CSV format: "
@@ -1869,6 +1906,7 @@ void loop() {
         } else {
           // Immediate execution path: initialize runtime indices/outputs.
           mode = LoopMode::ExecutingRun;
+          beginRunLog();
           runCallTime = micros();
           sequenceIndex = 0;
           solValveOpen = false;
