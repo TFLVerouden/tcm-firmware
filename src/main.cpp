@@ -173,10 +173,13 @@ const char *DATASET_FILE = "dataset_state.bin"; // Stores last loaded flow curve
 // SENSOR CONFIGURATION
 // ============================================================================
 // Pressure sensor (4-20mA R-Click) with exponential moving average filtering
-const uint32_t EMA_INTERVAL = 500; // Sampling interval for EMA [µs]
-const float EMA_LP_FREQ = 200.;    // Low-pass filter cutoff frequency [Hz]
+const uint32_t EMA_INTERVAL = 10; // Sampling interval for EMA [µs]
+const float EMA_LP_FREQ = 1000.;  // Low-pass filter cutoff frequency [Hz]
+const uint32_t FLOW_CURVE_PRESSURE_STREAM_INTERVAL_MS =
+    1; // Temporary test stream interval during run [ms]
 // Initialize with calibration values: p1_mA, p2_mA, p1_bitval, p2_bitval
-R_Click R_click(PIN_CS_RCLICK, RT_Click_Calibration{4.04, 10.98, 806, 2191});
+R_Click R_click(PIN_CS_RCLICK, RT_Click_Calibration{4.04, 10.98, 806, 2191},
+                EMA_INTERVAL, EMA_LP_FREQ);
 
 // Temperature & humidity sensor (SHT4x I2C)
 Adafruit_SHT4x sht4;
