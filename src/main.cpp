@@ -50,17 +50,13 @@ bool debug_enabled = false;
 #define DEBUG_PRINT(x)                                                         \
   do {                                                                         \
     if (debug_enabled) {                                                       \
-      Serial.print("[");                                                       \
       Serial.print(x);                                                         \
-      Serial.print("]");                                                       \
     }                                                                          \
   } while (0)
 #define DEBUG_PRINTLN(x)                                                       \
   do {                                                                         \
     if (debug_enabled) {                                                       \
-      Serial.print("[");                                                       \
-      Serial.print(x);                                                         \
-      Serial.println("]");                                                     \
+      Serial.println(x);                                                       \
     }                                                                          \
   } while (0)
 
@@ -798,6 +794,40 @@ void clearRunCsvFiles() {
   }
 }
 
+void printStoredFilesDebug() {
+  DEBUG_PRINTLN("Stored files:");
+
+  File root = fatfs.open("/");
+  if (!root) {
+    DEBUG_PRINTLN("  <unable to open root>");
+    return;
+  }
+
+  bool foundFile = false;
+  File entry = root.openNextFile();
+  while (entry) {
+    if (!entry.isDirectory()) {
+      char name[64];
+      if (entry.getName(name, sizeof(name))) {
+        foundFile = true;
+        DEBUG_PRINT("  ");
+        DEBUG_PRINT(name);
+        DEBUG_PRINT(" (");
+        DEBUG_PRINT((unsigned long)entry.size());
+        DEBUG_PRINTLN(" B)");
+      }
+    }
+    entry.close();
+    entry = root.openNextFile();
+  }
+
+  if (!foundFile) {
+    DEBUG_PRINTLN("  <none>");
+  }
+
+  root.close();
+}
+
 void clearSessionTracking() {
   // Reset session counters and latest filename tracking
   runCounter = 0;
@@ -1411,6 +1441,7 @@ void loop() {
       DEBUG_PRINT("Uptime: ");
       DEBUG_PRINT(millis() / 1000);
       DEBUG_PRINTLN(" s");
+      printStoredFilesDebug();
       break;
 
     case CommandId::Help:
