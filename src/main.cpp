@@ -17,6 +17,7 @@
  * 3) loop() mode processing + command dispatch
  */
 
+// TODO: Fix first run log of run still containing old data
 #include "Adafruit_SPIFlash.h"
 #include "DvG_StreamCommand.h"
 #include "MIKROE_4_20mA_RT_Click.h"
@@ -174,7 +175,7 @@ const char *DATASET_FILE = "dataset_state.bin"; // Stores last loaded flow curve
 // ============================================================================
 // Pressure sensor (4-20mA R-Click) with exponential moving average filtering
 const uint32_t EMA_INTERVAL = 10; // Sampling interval for EMA [µs]
-const float EMA_LP_FREQ = 1000.;  // Low-pass filter cutoff frequency [Hz]
+const float EMA_LP_FREQ = 500.;   // Low-pass filter cutoff frequency [Hz]
 const uint32_t FLOW_CURVE_PRESSURE_STREAM_INTERVAL_MS =
     1; // Temporary test stream interval during run [ms]
 // Initialize with calibration values: p1_mA, p2_mA, p1_bitval, p2_bitval
