@@ -73,9 +73,8 @@ const int PIN_TRIG = 9; // Trigger output for peripheral devices synchronization
 const int PIN_LASER = 12; // Laser MOSFET gate pin for droplet detection
 const int PIN_LIGHT = 5;  // Light output pin (PWM brightness)
 const int PIN_FAN = 3;    // Fan speed control pin (PWM, not yet implemented)
-const int PIN_NEB =
-    A3; // Nebuliser control pin (digital, seeds tracer droplets for PIV)
-const int PIN_PDA = A2; // Analog input from photodetector
+const int PIN_NEB = A3;   // Nebuliser control pin (digital)
+const int PIN_PDA = A2;   // Analog input from photodetector
 // Note: PIN_DOTSTAR_DATA and PIN_DOTSTAR_CLK are already defined in variant.h
 
 // ============================================================================
