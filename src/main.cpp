@@ -73,7 +73,9 @@ const int PIN_TRIG = 9; // Trigger output for peripheral devices synchronization
 const int PIN_LASER = 12; // Laser MOSFET gate pin for droplet detection
 const int PIN_LIGHT = 5;  // Light output pin (PWM brightness)
 const int PIN_FAN = 3;    // Fan speed control pin (PWM, not yet implemented)
-const int PIN_PDA = A2;   // Analog input from photodetector
+const int PIN_NEB =
+    A3; // Nebuliser control pin (digital, seeds tracer droplets for PIV)
+const int PIN_PDA = A2; // Analog input from photodetector
 // Note: PIN_DOTSTAR_DATA and PIN_DOTSTAR_CLK are already defined in variant.h
 
 // ============================================================================
@@ -575,6 +577,7 @@ void setup() {
   pinMode(PIN_LASER, OUTPUT);
   pinMode(PIN_LIGHT, OUTPUT);
   pinMode(PIN_FAN, OUTPUT);
+  pinMode(PIN_NEB, OUTPUT);
   pinMode(PIN_PDA, INPUT);
 
   // Set all outputs to safe initial state (off)
@@ -584,6 +587,7 @@ void setup() {
   digitalWrite(PIN_LASER, LOW);
   digitalWrite(PIN_LIGHT, LOW);
   digitalWrite(PIN_FAN, LOW);
+  digitalWrite(PIN_NEB, LOW);
 
   // Initialize T Clicks (proportional valve and pressure regulator)
   valve.begin();
@@ -1311,6 +1315,7 @@ void loop() {
       LaserTestToggle,
       LightToggle,
       FanSpeed,
+      NebuliserToggle,
       ReadPressure,
       ReadTempHumidity,
       WaitSet,
@@ -1365,6 +1370,8 @@ void loop() {
         return CommandId::LightToggle;
       if (strncmp(cmd, "F", 1) == 0)
         return CommandId::FanSpeed;
+      if (strncmp(cmd, "N", 1) == 0)
+        return CommandId::NebuliserToggle;
       if (strncmp(cmd, "W", 1) == 0)
         return CommandId::WaitSet;
       if (strncmp(cmd, "X", 1) == 0)
@@ -1511,6 +1518,7 @@ void loop() {
       DEBUG_PRINTLN("A <0|1> - Laser test mode off/on (streams photodiode "
                     "readings when on)");
       DEBUG_PRINTLN("F <val> - Set fan speed (pin 3, not yet implemented)");
+      DEBUG_PRINTLN("N <0|1> - Nebuliser off/on (pin A3)");
       DEBUG_PRINTLN("Q       - Quit active modes and return to idle");
       DEBUG_PRINTLN("[Read Out Sensors]");
       DEBUG_PRINTLN("P?      - Read current pressure (bar)");
@@ -1679,6 +1687,17 @@ void loop() {
       // Hardware not yet finalised — likely PWM.
       // Placeholder: accepts a speed value but does nothing.
       Serial.println("FAN_SPEED_SET");
+      break;
+    }
+
+    case CommandId::NebuliserToggle: {
+      int enable = parseIntInString(command, 1);
+      if (enable != 0 && enable != 1) {
+        printError("N expects 0 or 1!");
+        return;
+      }
+      digitalWrite(PIN_NEB, enable == 1 ? HIGH : LOW);
+      Serial.println(enable == 1 ? "NEBULISER_ON" : "NEBULISER_OFF");
       break;
     }
 
