@@ -1210,6 +1210,37 @@ void pollPressureSensors() {
   neb_RClick.poll_EMA();
 }
 
+// Arm laser-based droplet detection. Detect-and-run mode requires both a
+// loaded dataset and configured tank pressure; detect-only mode has neither
+// prerequisite. The function resets edge-tracking state before enabling laser.
+bool startDropletDetection(bool runAfterDetection) {
+  if (runAfterDetection && dataIndex == 0) {
+    printError("Flow curve dataset is empty! Upload first using L command.");
+    return false;
+  }
+  if (runAfterDetection && !controllerState.pressureConfigured) {
+    printError("Pressure regulator not set! Set it first using P command.");
+    return false;
+  }
+
+  if (controllerState.solValveOpen) {
+    closeSolValve();
+    controllerState.solValveOpen = false;
+  }
+  valve.set_mA(DEF_CURR_VALVE_MA);
+  sequenceIndex = 0;
+  controllerState.runAfterDropletDetection = runAfterDetection;
+
+  startLaser();
+  setLedColor(COLOR_LASER);
+  controllerState.mode = LoopMode::DropletDetect;
+  controllerState.belowThreshold = false;
+  controllerState.detectionBaselineReady = false;
+  controllerState.detectionStartTime = micros();
+  DEBUG_PRINTLN("Detecting droplets (primed to cough)");
+  return true;
+}
+
 // ============================================================================
 // MAIN LOOP
 // ============================================================================
@@ -1249,45 +1280,6 @@ void loop() {
   bool &runAfterDropletDetection = controllerState.runAfterDropletDetection;
   bool &setPressure = controllerState.pressureConfigured;
   uint32_t &laserTestLastPrint = controllerState.laserTestLastPrint;
-
-  /* ----------------------------------------------------------------------- */
-  /* [HELPER] Arm droplet detection mode                                     */
-  /* ----------------------------------------------------------------------- */
-  auto startDropletDetection = [&](bool runAfterDetection) -> bool {
-    // Responsibility:
-    // - Validate prerequisites (dataset + pressure only when runAfterDetection)
-    // - Reset run-time actuator state relevant to droplet arming
-    // - Set LoopMode::DropletDetect and baseline-tracking flags
-
-    // Validate prerequisites before arming detection
-    if (runAfterDetection && dataIndex == 0) {
-      printError("Flow curve dataset is empty! Upload first using L command.");
-      return false;
-    }
-    if (runAfterDetection && !setPressure) {
-      printError("Pressure regulator not set! Set it first using P command.");
-      return false;
-    }
-
-    // Ensure clean state before arming detection
-    if (solValveOpen) {
-      closeSolValve();
-      solValveOpen = false;
-    }
-    valve.set_mA(DEF_CURR_VALVE_MA);
-    sequenceIndex = 0;
-    runAfterDropletDetection = runAfterDetection;
-
-    // Turn on laser and start timing for detection
-    startLaser();
-    setLedColor(COLOR_LASER);
-    mode = LoopMode::DropletDetect;
-    belowThreshold = false;
-    detectionBaselineReady = false;
-    detectionStartTime = micros();
-    DEBUG_PRINTLN("Detecting droplets (primed to cough)");
-    return true;
-  };
 
   /* ----------------------------------------------------------------------- */
   /* [HELPER] Stop/clear all active operation modes                          */
