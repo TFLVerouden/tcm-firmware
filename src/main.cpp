@@ -915,24 +915,6 @@ void readPressure() {
   DEBUG_PRINTLN(tank_RClick.get_EMA_mA());
 }
 
-void readTemperatureHumidity(bool valveOpen) {
-  // Read temperature and relative humidity from SHT4x sensor
-  setLedColor(COLOR_READING); // Show color during reading
-  sensors_event_t humidity, temp;
-  sht4.getEvent(&humidity, &temp);
-
-  // Send temperature reading
-  Serial.print("T");
-  Serial.print(temp.temperature);
-
-  // Send humidity reading
-  Serial.print(" H");
-  Serial.println(humidity.relative_humidity);
-
-  // Restore LED color based on valve state
-  setLedColor(valveOpen ? COLOR_VALVE_OPEN : COLOR_IDLE);
-}
-
 float readPhotodetector() {
   // Read photodetector voltage with resistor divider compensation
   int adcValue = analogRead(PIN_PDA);
@@ -1626,6 +1608,72 @@ void handleLaserTestToggle(const char *command) {
   }
 }
 
+// Read and report the nebuliser pressure using the same conversion and debug
+// diagnostics as the tank pressure read command.
+void readNebPressure() {
+  Serial.print("M");
+  Serial.println(
+      pressureCurrentToBar(neb_RClick.get_EMA_mA(), NEB_PRESS_CALIBRATION));
+  DEBUG_PRINT("R Click bitvalue: ");
+  DEBUG_PRINTLN(neb_RClick.get_EMA_bitval());
+  DEBUG_PRINT("R Click mA: ");
+  DEBUG_PRINTLN(neb_RClick.get_EMA_mA());
+}
+
+// Read temperature and humidity, restoring the LED that reflects the current
+// solenoid state after the sensor's temporary reading indication.
+void readTemperatureHumidity() {
+  setLedColor(COLOR_READING);
+  sensors_event_t humidity, temp;
+  sht4.getEvent(&humidity, &temp);
+
+  Serial.print("T");
+  Serial.print(temp.temperature);
+  Serial.print(" H");
+  Serial.println(humidity.relative_humidity);
+
+  setLedColor(controllerState.solValveOpen ? COLOR_VALVE_OPEN : COLOR_IDLE);
+}
+
+// Report whether a dataset is ready, together with its row count and duration.
+void getDatasetStatus() {
+  if (dataset.loadedCount == 0) {
+    Serial.println("NO_DATASET");
+    return;
+  }
+  Serial.print("DATASET: ");
+  Serial.print(dataset.receivedCount);
+  Serial.print(" LINES AND ");
+  Serial.print(dataset.durationMs);
+  Serial.println(" MS");
+}
+
+// Start a single flow-curve run. A valid uploaded dataset and configured tank
+// pressure are required; the configured pre-trigger delay selects delayed or
+// immediate execution through the shared controller entry points.
+void handleRun() {
+  if (dataset.loadedCount == 0) {
+    printError("Dataset is empty! Upload first using L command.");
+    setLedColor(COLOR_ERROR);
+    delay(ERROR_LED_FLASH_INTERVAL_MS);
+    setLedColor(COLOR_OFF);
+    return;
+  }
+  if (!controllerState.pressureConfigured) {
+    printError("Pressure regulator not set! Set it first using P command.");
+    return;
+  }
+
+  stopActiveModes(false);
+  startRunSession();
+  if (pre_trigger_delay_us > 0) {
+    controllerState.mode = LoopMode::DelayBeforeRun;
+    controllerState.delayedRunStartTime = micros();
+    return;
+  }
+  beginDatasetExecution("STARTING_RUN");
+}
+
 void printSystemStatus() {
   DEBUG_PRINTLN("\n=== System Status ===");
   DEBUG_PRINT("Solenoid valve: ");
@@ -1743,15 +1791,6 @@ void loop() {
   // - ExecutingRun -> Idle: processDatasetExecution() on run completion
   // - LaserTest -> Idle: A 0 or stopActiveModes(...)
   // - Any mode -> Idle: stopActiveModes(...)
-
-  // These aliases keep the remaining command switch readable while command
-  // handlers are still being extracted from loop().
-  LoopMode &mode = controllerState.mode;
-  bool &solValveOpen = controllerState.solValveOpen;
-  bool &performingTrigger = controllerState.performingTrigger;
-  uint32_t &delayedRunStartTime = controllerState.delayedRunStartTime;
-  bool &setPressure = controllerState.pressureConfigured;
-  uint32_t &laserTestLastPrint = controllerState.laserTestLastPrint;
 
   //
   // LOOP PHASE 1/4: Fast periodic service
@@ -1931,18 +1970,11 @@ void loop() {
       break;
 
     case CommandId::ReadNebPressure:
-      Serial.print("M");
-      Serial.println(
-          pressureCurrentToBar(neb_RClick.get_EMA_mA(), NEB_PRESS_CALIBRATION));
-
-      DEBUG_PRINT("R Click bitvalue: ");
-      DEBUG_PRINTLN(neb_RClick.get_EMA_bitval());
-      DEBUG_PRINT("R Click mA: ");
-      DEBUG_PRINTLN(neb_RClick.get_EMA_mA());
+      readNebPressure();
       break;
 
     case CommandId::ReadTempHumidity:
-      readTemperatureHumidity(solValveOpen);
+      readTemperatureHumidity();
       break;
 
     case CommandId::LoadDataset:
@@ -1950,45 +1982,12 @@ void loop() {
       break;
 
     case CommandId::DatasetStatus:
-      if (dataset.loadedCount == 0) {
-        Serial.println("NO_DATASET");
-      } else {
-        Serial.print("DATASET: ");
-        Serial.print(dataset.receivedCount);
-        Serial.print(" LINES AND ");
-        Serial.print(dataset.durationMs);
-        Serial.println(" MS");
-      }
+      getDatasetStatus();
       break;
 
-    case CommandId::Run: {
-      // Start a single run using the loaded dataset
-      if (dataset.loadedCount == 0) {
-        printError("Dataset is empty! Upload first using L command.");
-        setLedColor(COLOR_ERROR);
-        delay(300);
-        setLedColor(COLOR_OFF);
-      } else if (!setPressure) {
-        printError("Pressure regulator not set! Set it first using P command.");
-      } else {
-        // Step 1: clear other active modes and reset mode flags/outputs.
-        stopActiveModes(false);
-
-        // Step 2: start fresh run session (file/counter reset).
-        startRunSession();
-
-        // Step 3: branch run mode based on pre-trigger delay setting.
-        if (pre_trigger_delay_us > 0) {
-          // Delayed execution path: remember delay start timestamp.
-          mode = LoopMode::DelayBeforeRun;
-          delayedRunStartTime = micros();
-        } else {
-          // Immediate execution path: initialize runtime indices and outputs.
-          beginDatasetExecution("STARTING_RUN");
-        }
-      }
+    case CommandId::Run:
+      handleRun();
       break;
-    }
 
     case CommandId::DropletRun: {
       // Command: D!
