@@ -901,7 +901,7 @@ template <typename T> void printError(const char *message, T value) {
   flashErrorLed();
 }
 
-void readPressure() {
+void handleReadTankPressure() {
   // Read current pressure from R-Click sensor and send over serial
   // Conversion formula: Pressure = 0.6249 * I[mA] - 2.4882
   // where I is the 4-20mA current output
@@ -1039,7 +1039,7 @@ void clearPersistentStateAndDataset() {
 // ============================================================================
 // SERIAL DATASET UPLOAD
 // ============================================================================
-void loadDataset(char *command) {
+void handleLoadDataset(char *command) {
   // Command: L <N> <duration_ms> <ms>,<mA>,<enable>,<trigger>,...
 
   // 1. Indicate that the complete command line is being processed.
@@ -1453,6 +1453,17 @@ void armDropletMode(bool runAfterDetection, int32_t requestedCount,
 // ============================================================================
 // These handlers contain command-specific serial output, keeping loop() focused
 // on parsing and dispatching rather than presentation details.
+void handleIdQuery() { Serial.println("TCM_control"); }
+
+void handleProtocolVersionQuery() {
+  Serial.print("PROTO ");
+  Serial.println(TCM_PROTOCOL_VERSION);
+}
+
+void handleUnknownCommand(const char *command) {
+  printError("Unknown command:", command);
+}
+
 // Set the proportional valve current after checking its 4-20 mA operating
 // range. The serial reply reports the current accepted by the hardware driver.
 void handleSetValve(const char *command) {
@@ -1608,9 +1619,81 @@ void handleLaserTestToggle(const char *command) {
   }
 }
 
+// Switch the nebuliser enable pin after validating its binary on/off argument.
+void handleNebuliserToggle(const char *command) {
+  int enable = parseIntInString(command, 1);
+  if (enable != 0 && enable != 1) {
+    printError("N expects 0 or 1!");
+    return;
+  }
+
+  digitalWrite(PIN_NEB, enable == 1 ? HIGH : LOW);
+  Serial.println(enable == 1 ? "NEBULISER_ON" : "NEBULISER_OFF");
+}
+
+// Set the light PWM duty from a normalized decimal in the inclusive range
+// [0.0, 1.0]. Trailing non-space input is rejected to keep the protocol strict.
+void handleLightToggle(char *command) {
+  char *valueStart = command + 1;
+  while (*valueStart == ' ') {
+    valueStart++;
+  }
+  if (*valueStart == '\0') {
+    printError("I expects a value in [0.0, 1.0]!");
+    return;
+  }
+
+  char *endPtr = nullptr;
+  double normalized = strtod(valueStart, &endPtr);
+  while (*endPtr == ' ') {
+    endPtr++;
+  }
+  if (endPtr == valueStart || *endPtr != '\0') {
+    printError("I expects a numeric value in [0.0, 1.0]!");
+    return;
+  }
+  if (normalized < LIGHT_LEVEL_MIN || normalized > LIGHT_LEVEL_MAX) {
+    printError("Light level out of range! Use 0.0 to 1.0.");
+    return;
+  }
+
+  uint8_t duty = static_cast<uint8_t>(normalized * PWM_MAX_DUTY + 0.5);
+  analogWrite(PIN_LIGHT, duty);
+  Serial.print("SET_LIGHT ");
+  Serial.print(static_cast<float>(normalized), 3);
+  Serial.print(" DUTY ");
+  Serial.println(static_cast<int>(duty));
+}
+
+// Enable or disable diagnostic serial output. Debug output remains opt-in so
+// normal serial traffic stays suitable for host-side parsing.
+void handleDebugToggle(const char *command) {
+  int enable = parseIntInString(command, 1);
+  if (enable != 0 && enable != 1) {
+    printError("B expects 0 or 1!");
+    return;
+  }
+  debug_enabled = enable == 1;
+  Serial.println(debug_enabled ? "DEBUG_ON" : "DEBUG_OFF");
+}
+
+// Keep the fan protocol command available while its PWM hardware behavior is
+// still intentionally unimplemented. TODO!!
+void handleFanSpeed() { Serial.println("FAN_SPEED_SET"); }
+
+// Parse D or D! count semantics and arm the selected droplet mode. D! resets
+// run-log session files because it executes datasets; D only detects droplets.
+void handleDropletCommand(const char *command, bool runAfterDetection) {
+  int32_t requestedCount = -1;
+  if (!parseDropletRunCount(command, runAfterDetection, requestedCount)) {
+    return;
+  }
+  armDropletMode(runAfterDetection, requestedCount, runAfterDetection);
+}
+
 // Read and report the nebuliser pressure using the same conversion and debug
 // diagnostics as the tank pressure read command.
-void readNebPressure() {
+void handleReadNebPressure() {
   Serial.print("M");
   Serial.println(
       pressureCurrentToBar(neb_RClick.get_EMA_mA(), NEB_PRESS_CALIBRATION));
@@ -1622,7 +1705,7 @@ void readNebPressure() {
 
 // Read temperature and humidity, restoring the LED that reflects the current
 // solenoid state after the sensor's temporary reading indication.
-void readTemperatureHumidity() {
+void handleReadTemperatureHumidity() {
   setLedColor(COLOR_READING);
   sensors_event_t humidity, temp;
   sht4.getEvent(&humidity, &temp);
@@ -1636,7 +1719,7 @@ void readTemperatureHumidity() {
 }
 
 // Report whether a dataset is ready, together with its row count and duration.
-void getDatasetStatus() {
+void handleDatasetStatus() {
   if (dataset.loadedCount == 0) {
     Serial.println("NO_DATASET");
     return;
@@ -1831,24 +1914,16 @@ void loop() {
     CommandId commandId = parseCommandId(command);
     switch (commandId) {
     case CommandId::IdQuery:
-      Serial.println("TCM_control");
+      handleIdQuery();
       break;
 
     case CommandId::ProtocolVersionQuery:
-      Serial.print("PROTO ");
-      Serial.println(TCM_PROTOCOL_VERSION);
+      handleProtocolVersionQuery();
       break;
 
-    case CommandId::DebugToggle: {
-      int enable = parseIntInString(command, 1);
-      if (enable != 0 && enable != 1) {
-        printError("B expects 0 or 1!");
-        return;
-      }
-      debug_enabled = (enable == 1);
-      Serial.println(debug_enabled ? "DEBUG_ON" : "DEBUG_OFF");
+    case CommandId::DebugToggle:
+      handleDebugToggle(command);
       break;
-    }
 
     case CommandId::StatusQuery:
       printSystemStatus();
@@ -1906,124 +1981,52 @@ void loop() {
       handleLaserTestToggle(command);
       break;
 
-    case CommandId::FanSpeed: {
-      // TODO: Implement fan speed control on PIN_FAN (pin 3).
-      // Hardware not yet finalised — likely PWM.
-      // Placeholder: accepts a speed value but does nothing.
-      Serial.println("FAN_SPEED_SET");
+    case CommandId::FanSpeed:
+      handleFanSpeed();
       break;
-    }
 
-    case CommandId::NebuliserToggle: {
-      int enable = parseIntInString(command, 1);
-      if (enable != 0 && enable != 1) {
-        printError("N expects 0 or 1!");
-        return;
-      }
-      digitalWrite(PIN_NEB, enable == 1 ? HIGH : LOW);
-      Serial.println(enable == 1 ? "NEBULISER_ON" : "NEBULISER_OFF");
+    case CommandId::NebuliserToggle:
+      handleNebuliserToggle(command);
       break;
-    }
 
-    case CommandId::LightToggle: {
-      // Command: I <level>
-      // level is normalized PWM duty in [0.0, 1.0].
-      // Backward compatible: legacy I 0 and I 1 are still valid.
-      char *valueStart = command + 1;
-      while (*valueStart == ' ') {
-        valueStart++;
-      }
-
-      if (*valueStart == '\0') {
-        printError("I expects a value in [0.0, 1.0]!");
-        return;
-      }
-
-      char *endPtr = nullptr;
-      double normalized = strtod(valueStart, &endPtr);
-      while (*endPtr == ' ') {
-        endPtr++;
-      }
-
-      if (endPtr == valueStart || *endPtr != '\0') {
-        printError("I expects a numeric value in [0.0, 1.0]!");
-        return;
-      }
-
-      if (normalized < LIGHT_LEVEL_MIN || normalized > LIGHT_LEVEL_MAX) {
-        printError("Light level out of range! Use 0.0 to 1.0.");
-        return;
-      }
-
-      uint8_t duty = (uint8_t)(normalized * PWM_MAX_DUTY + 0.5);
-      analogWrite(PIN_LIGHT, duty);
-
-      Serial.print("SET_LIGHT ");
-      Serial.print((float)normalized, 3);
-      Serial.print(" DUTY ");
-      Serial.println((int)duty);
+    case CommandId::LightToggle:
+      handleLightToggle(command);
       break;
-    }
 
     case CommandId::ReadTankPressure:
-      readPressure();
+      handleReadTankPressure();
       break;
 
     case CommandId::ReadNebPressure:
-      readNebPressure();
+      handleReadNebPressure();
       break;
 
     case CommandId::ReadTempHumidity:
-      readTemperatureHumidity();
+      handleReadTemperatureHumidity();
       break;
 
     case CommandId::LoadDataset:
-      loadDataset(command);
+      handleLoadDataset(command);
       break;
 
     case CommandId::DatasetStatus:
-      getDatasetStatus();
+      handleDatasetStatus();
       break;
 
     case CommandId::Run:
       handleRun();
       break;
 
-    case CommandId::DropletRun: {
-      // Command: D!
-      // Arm droplet detection; upon droplet detection wait W delay and run
-      // the currently loaded dataset.
-      // Optional count: D! <n>. Without a number: run indefinitely.
-
-      int32_t requestedCount = -1;
-      if (!parseDropletRunCount(command, true, requestedCount)) {
-        return;
-      }
-
-      // For D!: reset run-session files/counters because runs will be logged.
-      armDropletMode(true, requestedCount, true);
+    case CommandId::DropletRun:
+      handleDropletCommand(command, true);
       break;
-    }
 
-    case CommandId::DropletDetect: {
-      // Command: D
-      // Arm droplet detection only (no dataset run).
-      // Optional count: D <n>. Without a number: run indefinitely.
-
-      int32_t requestedCount = -1;
-      if (!parseDropletRunCount(command, false, requestedCount)) {
-        return;
-      }
-
-      // For D: no run-session reset needed because this mode does not execute
-      // and log the flow-curve by itself.
-      armDropletMode(false, requestedCount, false);
-
+    case CommandId::DropletDetect:
+      handleDropletCommand(command, false);
       break;
-    }
 
     case CommandId::Other:
-      printError("Unknown command:", command);
+      handleUnknownCommand(command);
       break;
     }
   }
