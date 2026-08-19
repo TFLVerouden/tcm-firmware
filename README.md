@@ -87,6 +87,8 @@ Commands are ASCII lines terminated by newline (\n). Units are noted per command
 | `D!` | Continuously detect droplets and run the loaded flow curve after each detection. | `DROPLET_ARMED` |
 | `D! <n>` | Detect `n` droplets and run the loaded flow curve after each detection. | `DROPLET_ARMED` |
 
+The host and MCU protocol versions must match exactly. Increase the protocol version only for breaking serial-contract changes. A dataset trigger event is independent of solenoid state, and its pulse width is defined by `TRIGGER_WIDTH` in [src/main.cpp](src/main.cpp).
+
 ## Files
 
 - [src/main.cpp](src/main.cpp) contains the firmware implementation and the on-device help menu.
