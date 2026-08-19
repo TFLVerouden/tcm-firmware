@@ -1032,8 +1032,19 @@ void loadDataset(char *command) {
 
   // 3. Split the header into the number of rows and total duration in ms.
   char *token = strtok(command + 2, " ");
+  if (token == nullptr) {
+    printError("L command is missing the dataset row count!");
+    resetDataArrays();
+    return;
+  }
   incomingCount = atoi(token);
+
   token = strtok(NULL, " ");
+  if (token == nullptr) {
+    printError("L command is missing the dataset duration!");
+    resetDataArrays();
+    return;
+  }
   datasetDuration = atoi(token);
 
   // The fixed-size arrays must be able to hold every requested row.
