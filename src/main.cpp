@@ -291,25 +291,26 @@ bool debug_enabled = false;
   } while (0)
 
 // ============================================================================
-// FLOW-CURVE DATASET BUFFERS
+// FLOW-CURVE DATASET STATE
 // ============================================================================
-// Buffers used for receiving and storing the uploaded dataset
-int incomingCount = 0;           // Declare incoming dataset length globally
-char cmd_buf[CMD_BUF_LEN]{'\0'}; // Instantiate empty Serial buffer
-uint32_t time_array[MAX_DATA_LENGTH];       // Time dataset
-float value_array[MAX_DATA_LENGTH];         // mA dataset
-uint8_t sol_enable_array[MAX_DATA_LENGTH];  // 0/1: solenoid enable
-uint8_t trig_enable_array[MAX_DATA_LENGTH]; // 0/1: trigger pulse event
-// Create DvG_StreamCommand object on Serial stream
-DvG_StreamCommand sc(Serial, cmd_buf, CMD_BUF_LEN);
+// Keeps uploaded rows, their metadata, and the current playback position
+// together. Future modules can depend on this single context instead of a
+// collection of independent global arrays and counters.
+struct FlowCurveDataset {
+  uint32_t timeMs[MAX_DATA_LENGTH];
+  float valveCurrentMa[MAX_DATA_LENGTH];
+  uint8_t solenoidEnabled[MAX_DATA_LENGTH];
+  uint8_t triggerEnabled[MAX_DATA_LENGTH];
+  int receivedCount = 0;
+  int loadedCount = 0;
+  int durationMs = 0;
+  int nextIndex = 0;
+};
 
-// ============================================================================
-// FLOW-CURVE EXECUTION RUNTIME STATE
-// ============================================================================
-// Indices and counters used during flow curve playback
-int sequenceIndex = 0;     // Index of dataset to execute on time
-int dataIndex = 0;         // Number of datapoints of dataset stored
-int datasetDuration = 0.0; // Duration of the uploaded flow profile
+FlowCurveDataset dataset;
+char cmd_buf[CMD_BUF_LEN]{'\0'};
+// Create DvG_StreamCommand object on Serial stream.
+DvG_StreamCommand sc(Serial, cmd_buf, CMD_BUF_LEN);
 
 // ============================================================================
 // QSPI FLASH FILESYSTEM INTERFACE
@@ -523,7 +524,7 @@ struct __attribute__((__packed__)) DatasetRow {
 };
 
 bool saveDatasetToFlash() {
-  if (dataIndex <= 0) {
+  if (dataset.loadedCount <= 0) {
     return false;
   }
 
@@ -537,9 +538,9 @@ bool saveDatasetToFlash() {
     return false;
   }
 
-  DatasetHeader header{DATASET_MAGIC, static_cast<uint32_t>(dataIndex),
-                       static_cast<uint32_t>(datasetDuration),
-                       DATASET_FORMAT_VERSION};
+  DatasetHeader header{
+      DATASET_MAGIC, static_cast<uint32_t>(dataset.loadedCount),
+      static_cast<uint32_t>(dataset.durationMs), DATASET_FORMAT_VERSION};
   if (file.write(reinterpret_cast<const uint8_t *>(&header), sizeof(header)) !=
       sizeof(header)) {
     printError("Error writing dataset header!");
@@ -547,9 +548,9 @@ bool saveDatasetToFlash() {
     return false;
   }
 
-  for (int i = 0; i < dataIndex; i++) {
-    DatasetRow row{time_array[i], value_array[i], sol_enable_array[i],
-                   trig_enable_array[i]};
+  for (int i = 0; i < dataset.loadedCount; i++) {
+    DatasetRow row{dataset.timeMs[i], dataset.valveCurrentMa[i],
+                   dataset.solenoidEnabled[i], dataset.triggerEnabled[i]};
     if (file.write(reinterpret_cast<const uint8_t *>(&row), sizeof(row)) !=
         sizeof(row)) {
       printError("Error writing dataset row!");
@@ -605,15 +606,15 @@ bool loadDatasetFromFlash() {
       file.close();
       return false;
     }
-    time_array[i] = row.time_ms;
-    value_array[i] = row.value_mA;
-    sol_enable_array[i] = row.enable;
-    trig_enable_array[i] = row.trigger;
+    dataset.timeMs[i] = row.time_ms;
+    dataset.valveCurrentMa[i] = row.value_mA;
+    dataset.solenoidEnabled[i] = row.enable;
+    dataset.triggerEnabled[i] = row.trigger;
   }
 
-  incomingCount = static_cast<int>(header.count);
-  dataIndex = static_cast<int>(header.count);
-  datasetDuration = static_cast<int>(header.duration_ms);
+  dataset.receivedCount = static_cast<int>(header.count);
+  dataset.loadedCount = static_cast<int>(header.count);
+  dataset.durationMs = static_cast<int>(header.duration_ms);
   file.close();
   return true;
 }
@@ -948,16 +949,16 @@ float readPhotodetector() {
 // ============================================================================
 void resetDataArrays() {
   // Clear all flow curve dataset buffers and indices
-  memset(time_array, 0, sizeof(time_array));
-  memset(value_array, 0, sizeof(value_array));
-  memset(sol_enable_array, 0, sizeof(sol_enable_array));
-  memset(trig_enable_array, 0, sizeof(trig_enable_array));
-  incomingCount = 0;
+  memset(dataset.timeMs, 0, sizeof(dataset.timeMs));
+  memset(dataset.valveCurrentMa, 0, sizeof(dataset.valveCurrentMa));
+  memset(dataset.solenoidEnabled, 0, sizeof(dataset.solenoidEnabled));
+  memset(dataset.triggerEnabled, 0, sizeof(dataset.triggerEnabled));
+  dataset.receivedCount = 0;
   // Keep metadata and execution index in sync with cleared buffers.
   // Prevents stale dataset status after parse failures/clear operations.
-  dataIndex = 0;
-  sequenceIndex = 0;
-  datasetDuration = 0;
+  dataset.loadedCount = 0;
+  dataset.nextIndex = 0;
+  dataset.durationMs = 0;
 }
 
 void clearRunCsvFiles() {
@@ -1075,7 +1076,7 @@ void loadDataset(char *command) {
     resetDataArrays();
     return;
   }
-  incomingCount = atoi(token);
+  dataset.receivedCount = atoi(token);
 
   token = strtok(NULL, " ");
   if (token == nullptr) {
@@ -1083,46 +1084,46 @@ void loadDataset(char *command) {
     resetDataArrays();
     return;
   }
-  datasetDuration = atoi(token);
+  dataset.durationMs = atoi(token);
 
   // The fixed-size arrays must be able to hold every requested row.
-  if (incomingCount > MAX_DATA_LENGTH || incomingCount <= 0) {
+  if (dataset.receivedCount > MAX_DATA_LENGTH || dataset.receivedCount <= 0) {
     printError("Data length is not allowed: 0 < N <", MAX_DATA_LENGTH);
     resetDataArrays();
     return;
   }
 
   // 4. Parse each CSV row into the four arrays used during execution.
-  dataIndex = 0;
-  for (int index = 0; index < incomingCount; index++) {
+  dataset.loadedCount = 0;
+  for (int index = 0; index < dataset.receivedCount; index++) {
     // Field 1: timestamp relative to the start of the dataset [ms].
     token = strtok(NULL, ",");
     if (token == NULL) {
       printError("Token was NULL, breaking CSV parsing. Upload new dataset! "
                  "Error at data index ",
-                 dataIndex);
+                 dataset.loadedCount);
       resetDataArrays();
       break;
     }
-    time_array[index] = atoi(token);
+    dataset.timeMs[index] = atoi(token);
 
     // Field 2: proportional-valve current [mA].
     token = strtok(NULL, ",");
     if (token == NULL) {
       printError("Token was NULL, breaking CSV parsing. Upload new dataset! "
                  "Error at data index",
-                 dataIndex);
+                 dataset.loadedCount);
       resetDataArrays();
       break;
     }
-    value_array[index] = parseFloatInString(token, 0);
+    dataset.valveCurrentMa[index] = parseFloatInString(token, 0);
 
     // Field 3: solenoid state, restricted to the binary values 0 and 1.
     token = strtok(NULL, ",");
     if (token == NULL) {
       printError("Token was NULL, breaking CSV parsing. Upload new dataset! "
                  "Error at data index",
-                 dataIndex);
+                 dataset.loadedCount);
       resetDataArrays();
       break;
     }
@@ -1130,18 +1131,18 @@ void loadDataset(char *command) {
     if (enable == -1) {
       printError("Enable flag must be 0 or 1. Upload new dataset! Error at "
                  "data index",
-                 dataIndex);
+                 dataset.loadedCount);
       resetDataArrays();
       break;
     }
-    sol_enable_array[index] = static_cast<uint8_t>(enable);
+    dataset.solenoidEnabled[index] = static_cast<uint8_t>(enable);
 
     // Field 4: trigger event, also restricted to the binary values 0 and 1.
     token = strtok(NULL, ",");
     if (token == NULL) {
       printError("Token was NULL, breaking CSV parsing. Upload new dataset! "
                  "Error at data index",
-                 dataIndex);
+                 dataset.loadedCount);
       resetDataArrays();
       break;
     }
@@ -1151,26 +1152,26 @@ void loadDataset(char *command) {
     if (trigger == -1) {
       printError("Trigger flag must be 0 or 1. Upload new dataset! Error at "
                  "data index",
-                 dataIndex);
+                 dataset.loadedCount);
       resetDataArrays();
       break;
     }
-    trig_enable_array[index] = static_cast<uint8_t>(trigger);
+    dataset.triggerEnabled[index] = static_cast<uint8_t>(trigger);
 
     // Emit the accepted row only when debug output is enabled.
     DEBUG_PRINT("Timestamp: ");
-    DEBUG_PRINT(time_array[index]);
+    DEBUG_PRINT(dataset.timeMs[index]);
     DEBUG_PRINT(", mA: ");
-    DEBUG_PRINT(value_array[index]);
+    DEBUG_PRINT(dataset.valveCurrentMa[index]);
     DEBUG_PRINT(", enable: ");
-    DEBUG_PRINT(sol_enable_array[index]);
+    DEBUG_PRINT(dataset.solenoidEnabled[index]);
     DEBUG_PRINT(", trigger: ");
-    DEBUG_PRINTLN(trig_enable_array[index]);
-    dataIndex++;
+    DEBUG_PRINTLN(dataset.triggerEnabled[index]);
+    dataset.loadedCount++;
   }
 
   // 5. Tell the host parsing finished, then persist valid parsed rows for boot
-  // recovery. A failed parse leaves dataIndex at zero, so nothing is saved.
+  // recovery. A failed parse leaves loadedCount at zero, so nothing is saved.
   Serial.println("DATASET_RECEIVED");
   if (!saveDatasetToFlash()) {
     printError("Failed to persist dataset to flash!");
@@ -1192,7 +1193,7 @@ void beginDatasetExecution(const char *statusMessage) {
   controllerState.mode = LoopMode::ExecutingRun;
   beginRunLog();
   runCallTime = micros();
-  sequenceIndex = 0;
+  dataset.nextIndex = 0;
   controllerState.solValveOpen = false;
   valve.set_mA(DEF_CURR_VALVE_MA);
 
@@ -1226,7 +1227,7 @@ void pollPressureSensors() {
 // loaded dataset and configured tank pressure; detect-only mode has neither
 // prerequisite. The function resets edge-tracking state before enabling laser.
 bool startDropletDetection(bool runAfterDetection) {
-  if (runAfterDetection && dataIndex == 0) {
+  if (runAfterDetection && dataset.loadedCount == 0) {
     printError("Flow curve dataset is empty! Upload first using L command.");
     return false;
   }
@@ -1240,7 +1241,7 @@ bool startDropletDetection(bool runAfterDetection) {
     controllerState.solValveOpen = false;
   }
   valve.set_mA(DEF_CURR_VALVE_MA);
-  sequenceIndex = 0;
+  dataset.nextIndex = 0;
   controllerState.runAfterDropletDetection = runAfterDetection;
 
   startLaser();
@@ -1273,7 +1274,7 @@ void stopActiveModes(bool setIdleLed = true) {
     stopLaser();
   }
   controllerState.mode = LoopMode::Idle;
-  sequenceIndex = 0;
+  dataset.nextIndex = 0;
   dropletRunsRemaining = 0;
   controllerState.runAfterDropletDetection = false;
   controllerState.belowThreshold = false;
@@ -1393,13 +1394,14 @@ bool processDatasetExecution() {
   }
 
   uint32_t nowMs = (micros() - runCallTime) / DATASET_TIME_SCALE_US_PER_MS;
-  while (sequenceIndex < dataIndex && nowMs >= time_array[sequenceIndex]) {
-    uint8_t enable = sol_enable_array[sequenceIndex];
-    uint8_t trigger = trig_enable_array[sequenceIndex];
+  while (dataset.nextIndex < dataset.loadedCount &&
+         nowMs >= dataset.timeMs[dataset.nextIndex]) {
+    uint8_t enable = dataset.solenoidEnabled[dataset.nextIndex];
+    uint8_t trigger = dataset.triggerEnabled[dataset.nextIndex];
 
-    valve.set_mA(value_array[sequenceIndex]);
+    valve.set_mA(dataset.valveCurrentMa[dataset.nextIndex]);
     recordEvent(
-        -1, value_array[sequenceIndex],
+        -1, dataset.valveCurrentMa[dataset.nextIndex],
         pressureCurrentToBar(tank_RClick.get_EMA_mA(), TANK_PRESS_CALIBRATION));
 
     if (enable && !controllerState.solValveOpen) {
@@ -1417,11 +1419,11 @@ bool processDatasetExecution() {
       controllerState.performingTrigger = true;
       tick = micros();
     }
-    sequenceIndex++;
+    dataset.nextIndex++;
   }
 
-  if (nowMs < static_cast<uint32_t>(datasetDuration) ||
-      sequenceIndex < dataIndex) {
+  if (nowMs < static_cast<uint32_t>(dataset.durationMs) ||
+      dataset.nextIndex < dataset.loadedCount) {
     return false;
   }
 
@@ -1432,7 +1434,7 @@ bool processDatasetExecution() {
   }
 
   controllerState.mode = LoopMode::Idle;
-  sequenceIndex = 0;
+  dataset.nextIndex = 0;
   setLedColor(COLOR_OFF);
   Serial.println("FINISHED");
   saveToFlash();
@@ -1491,8 +1493,7 @@ void handleSetTankPressure(const char *command) {
   controllerState.pressureConfigured = true;
   float bar = parseFloatInString(command, 1);
   float current = pressureBarToCurrent(bar, TANK_PRESS_CALIBRATION);
-  if (!current || current < MIN_CURR_PRESS_REG_MA ||
-      current > MAX_CURR_MA) {
+  if (!current || current < MIN_CURR_PRESS_REG_MA || current > MAX_CURR_MA) {
     printError("Pressure input out of range!");
     return;
   }
@@ -1512,8 +1513,7 @@ void handleSetTankPressure(const char *command) {
 void handleSetNebPressure(const char *command) {
   float bar = parseFloatInString(command, 1);
   float current = pressureBarToCurrent(bar, NEB_PRESS_CALIBRATION);
-  if (!current || current < MIN_CURR_PRESS_REG_MA ||
-      current > MAX_CURR_MA) {
+  if (!current || current < MIN_CURR_PRESS_REG_MA || current > MAX_CURR_MA) {
     printError("Nebuliser pressure input out of range!");
     return;
   }
@@ -1528,7 +1528,7 @@ void printSystemStatus() {
   DEBUG_PRINT("Solenoid valve: ");
   DEBUG_PRINTLN(controllerState.solValveOpen ? "OPEN" : "CLOSED");
   DEBUG_PRINT("Dataset in memory: ");
-  DEBUG_PRINTLN((dataIndex == 0) ? "FALSE" : "TRUE");
+  DEBUG_PRINTLN((dataset.loadedCount == 0) ? "FALSE" : "TRUE");
   DEBUG_PRINT("Executing dataset: ");
   DEBUG_PRINTLN(controllerState.mode == LoopMode::ExecutingRun ? "TRUE"
                                                                : "FALSE");
@@ -1907,20 +1907,20 @@ void loop() {
       break;
 
     case CommandId::DatasetStatus:
-      if (dataIndex == 0) {
+      if (dataset.loadedCount == 0) {
         Serial.println("NO_DATASET");
       } else {
         Serial.print("DATASET: ");
-        Serial.print(incomingCount);
+        Serial.print(dataset.receivedCount);
         Serial.print(" LINES AND ");
-        Serial.print(datasetDuration);
+        Serial.print(dataset.durationMs);
         Serial.println(" MS");
       }
       break;
 
     case CommandId::Run: {
       // Start a single run using the loaded dataset
-      if (dataIndex == 0) {
+      if (dataset.loadedCount == 0) {
         printError("Dataset is empty! Upload first using L command.");
         setLedColor(COLOR_ERROR);
         delay(300);
