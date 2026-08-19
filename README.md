@@ -10,8 +10,10 @@ See also the [Twente Cough Machine hardware documentation](https://github.com/TF
 | --- | --- |
 | Solenoid valve MOSFET gate | 7 |
 | Proportional valve T-Click chip select | 11 |
-| Pressure regulator T-Click chip select | 10 |
-| Pressure sensor R-Click chip select | 2 |
+| Tank pressure regulator T-Click chip select | 10 |
+| Nebuliser pressure regulator T-Click chip select | 4 |
+| Tank pressure sensor R-Click chip select | 2 |
+| Nebuliser pressure sensor R-Click chip select | 13 |
 | Trigger output | 9 |
 | Laser MOSFET gate | 12 |
 | Light PWM output | 5 |
@@ -19,7 +21,7 @@ See also the [Twente Cough Machine hardware documentation](https://github.com/TF
 | Nebuliser enable | A3 |
 | Photodetector input | A2 |
 
-All controlled outputs start LOW at boot. The pressure regulator restores its last valid saved setting from QSPI flash; when no valid setting is available, it uses the firmware default of 4.0 mA. Pressure conversion and sensor calibration constants are defined in [src/main.cpp](src/main.cpp).
+All controlled outputs start LOW at boot. The tank pressure regulator restores its last valid saved setting from QSPI flash; when no valid setting is available, it uses the firmware default of 4.0 mA. Pressure conversion and sensor calibration constants are defined in [src/main.cpp](src/main.cpp).
 
 ## Build & upload
 
@@ -45,8 +47,9 @@ The firmware responds on the same serial connection. Enable debug output with `B
 
 | Command | Description | Reply |
 | --- | --- | --- |
-| `V <mA>` | Set proportional-valve current in mA. | `SET_VALVE <mA>` |
-| `P <bar>` | Set pressure-regulator target in bar. | `SET_PRESSURE <bar>` |
+| `V <mA>` | Set proportional valve current in mA. | `SET_VALVE <mA>` |
+| `P <bar>` | Set pressure regulator target in bar. | `SET_PRESSURE <bar>` |
+| `M <bar>` | Set nebuliser pressure regulator target in bar. | `SET_NEB_PRESSURE <bar>` |
 | `O` | Open the solenoid valve. | `SOLENOID_OPENED` |
 | `C` | Close the solenoid valve. | `SOLENOID_CLOSED` |
 | `I <level>` | Set light output on pin 5 with normalized PWM from `0.0` to `1.0`. | `SET_LIGHT <level> DUTY <0-255>` |
@@ -61,6 +64,7 @@ The firmware responds on the same serial connection. Enable debug output with `B
 | Command | Description | Reply |
 | --- | --- | --- |
 | `P?` | Read current pressure in bar. | `P<bar>` |
+| `M?` | Read current nebuliser pressure in bar. | `M<bar>` |
 | `T?` | Read temperature and relative humidity. | `T<degC> H<%RH>` |
 
 ### Configuration

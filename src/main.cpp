@@ -64,11 +64,15 @@ bool debug_enabled = false;
 // ============================================================================
 // PIN DEFINITIONS
 // ============================================================================
+// TODO: Clean up definition names, go critically through code
 // Hardware pin mapping for the ItsyBitsy M4
-const int PIN_VALVE = 7;       // MOSFET gate pin for solenoid valve control
-const int PIN_PROP_VALVE = 11; // Chip select for proportional valve
-const int PIN_PRES_REG = 10;   // Chip select for pressure regulator
-const int PIN_CS_RCLICK = 2;   // Chip select for R-Click pressure sensor (SPI)
+const int PIN_VALVE = 7;           // MOSFET gate pin for solenoid valve control
+const int PIN_PROP_VALVE = 11;     // Chip select for proportional valve
+const int PIN_TANK_CS_TCLICK = 10; // Chip select for tank pressure regulator
+const int PIN_TANK_CS_RCLICK = 2;  // Chip select for tank pressure sensor (SPI)
+const int PIN_NEB_CS_TCLICK = 4; // Chip select for nebuliser pressure regulator
+const int PIN_NEB_CS_RCLICK =
+    13;                 // Chip select for nebuliser pressure sensor (SPI)
 const int PIN_TRIG = 9; // Trigger output for peripheral devices synchronization
 const int PIN_LASER = 12; // Laser MOSFET gate pin for droplet detection
 const int PIN_LIGHT = 5;  // Light output pin (PWM brightness)
@@ -157,12 +161,19 @@ uint32_t runCallTime = 0; // Time elapsed since "RUN" command [µs]
 // PRESSURE CONVERSION CALIBRATION
 // ============================================================================
 // Setpoint conversion (requested pressure [bar] -> regulator current [mA])
-const float PRESSURE_SETPOINT_BAR_OFFSET = 2.48821429f;
-const float PRESSURE_SETPOINT_BAR_PER_mA = 0.62242857f;
+struct PressureCalibration {
+  float set_bar_per_mA;
+  float set_bar_offset;
+  float read_bar_per_mA;
+  float read_bar_offset;
+};
 
-// Sensor readback conversion (measured current [mA] -> pressure [bar])
-const float PRESSURE_READBACK_BAR_PER_mA = 0.6255112463192659f;
-const float PRESSURE_READBACK_BAR_OFFSET = -2.534598501736508f;
+const PressureCalibration TANK_PRESS_CALIBRATION{
+    0.62242857f, 2.48821429f, 0.6255112463192659f, -2.534598501736508f};
+
+// TODO: Replace with calibration values for the nebuliser pressure loop.
+const PressureCalibration NEB_PRESS_CALIBRATION{
+    0.62242857f, 2.48821429f, 0.6255112463192659f, -2.534598501736508f};
 
 // ============================================================================
 // PERSISTENCE FILE KEYS + SESSION TRACKING
@@ -180,8 +191,14 @@ const float EMA_LP_FREQ = 500.;   // Low-pass filter cutoff frequency [Hz]
 const uint32_t FLOW_CURVE_PRESSURE_STREAM_INTERVAL_MS =
     1; // Temporary test stream interval during run [ms]
 // Initialize with calibration values: p1_mA, p2_mA, p1_bitval, p2_bitval
-R_Click R_click(PIN_CS_RCLICK, RT_Click_Calibration{4.04, 10.98, 806, 2191},
-                EMA_INTERVAL, EMA_LP_FREQ);
+R_Click tank_RClick(PIN_TANK_CS_RCLICK,
+                    RT_Click_Calibration{4.04, 10.98, 806, 2191}, EMA_INTERVAL,
+                    EMA_LP_FREQ);
+
+// TODO: Replace with calibration values for the nebuliser R-Click.
+R_Click neb_Rclick(PIN_NEB_CS_RCLICK,
+                   RT_Click_Calibration{4.04, 10.98, 806, 2191}, EMA_INTERVAL,
+                   EMA_LP_FREQ);
 
 // Temperature & humidity sensor (SHT4x I2C)
 Adafruit_SHT4x sht4;
@@ -197,7 +214,12 @@ const float PDA_MIN_VALID = 0.1; // Minimum valid signal [V] (detect PSU off)
 // ============================================================================
 // Proportional valve and pressure regulator interfaces
 T_Click valve(PIN_PROP_VALVE, RT_Click_Calibration{3.97, 19.90, 796, 3982});
-T_Click pressure(PIN_PRES_REG, RT_Click_Calibration{3.97, 19.90, 796, 3982});
+T_Click pressure(PIN_TANK_CS_TCLICK,
+                 RT_Click_Calibration{3.97, 19.90, 796, 3982});
+
+// TODO: Replace with calibration values for the nebuliser T-Click.
+T_Click neb_pressure(PIN_NEB_CS_TCLICK,
+                     RT_Click_Calibration{3.97, 19.90, 796, 3982});
 
 // Define default T Click values
 const float max_mA = 20.0;
@@ -270,17 +292,13 @@ void recordEvent(int8_t v1, float v2, float press) {
   }
 }
 
-float pressureBarToCurrent(float bar) {
-  // Convert requested pressure [bar] to regulator current [mA]
-  // Uses the pressure-regulator setpoint calibration.
-  return (bar + PRESSURE_SETPOINT_BAR_OFFSET) / PRESSURE_SETPOINT_BAR_PER_mA;
+float pressureBarToCurrent(float bar, const PressureCalibration &calibration) {
+  return (bar + calibration.set_bar_offset) / calibration.set_bar_per_mA;
 }
 
-float pressureCurrentToBar(float current_mA) {
-  // Convert measured sensor current [mA] to pressure [bar]
-  // Uses the pressure-sensor readback calibration.
-  return PRESSURE_READBACK_BAR_PER_mA * current_mA +
-         PRESSURE_READBACK_BAR_OFFSET;
+float pressureCurrentToBar(float current_mA,
+                           const PressureCalibration &calibration) {
+  return calibration.read_bar_per_mA * current_mA + calibration.read_bar_offset;
 }
 
 // ============================================================================
@@ -334,7 +352,8 @@ void loadPersistentState() {
     if (strncmp(line, pressureKey, strlen(pressureKey)) == 0) {
       const char *value = line + strlen(pressureKey);
       lastPressure_bar = atof(value);
-      float current = pressureBarToCurrent(lastPressure_bar);
+      float current =
+          pressureBarToCurrent(lastPressure_bar, TANK_PRESS_CALIBRATION);
       // Validate range before applying
       if (current >= min_mA_pres_reg && current <= max_mA) {
         pressureInitializedFromFlash = true;
@@ -474,7 +493,8 @@ bool loadDatasetFromFlash() {
 bool restorePressureFromFlash() {
   loadPersistentState();
   if (pressureInitializedFromFlash) {
-    float current = pressureBarToCurrent(lastPressure_bar);
+    float current =
+        pressureBarToCurrent(lastPressure_bar, TANK_PRESS_CALIBRATION);
     pressure.set_mA(current);
     return true;
   }
@@ -571,7 +591,7 @@ void setup() {
   // Basic pin modes and safe default states
   pinMode(PIN_LED, OUTPUT);
   pinMode(PIN_VALVE, OUTPUT);
-  pinMode(PIN_CS_RCLICK, INPUT);
+  pinMode(PIN_TANK_CS_RCLICK, INPUT);
   pinMode(PIN_TRIG, OUTPUT);
   pinMode(PIN_LASER, OUTPUT);
   pinMode(PIN_LIGHT, OUTPUT);
@@ -607,7 +627,8 @@ void setup() {
   analogReadResolution(12); // 12-bit ADC (0-4095)
 
   // Initialize pressure sensor
-  R_click.begin();
+  tank_RClick.begin();
+  neb_Rclick.begin();
 
   // Initialize the SHT4x temperature & humidity sensor
   if (!sht4.begin()) {
@@ -666,7 +687,9 @@ void openSolValve() {
   PORT->Group[g_APinDescription[PIN_VALVE].ulPort].OUTSET.reg =
       (1 << g_APinDescription[PIN_VALVE].ulPin);
 
-  recordEvent(1, -1, pressureCurrentToBar(R_click.get_EMA_mA()));
+  recordEvent(
+      1, -1,
+      pressureCurrentToBar(tank_RClick.get_EMA_mA(), TANK_PRESS_CALIBRATION));
   // Log valve open event
 }
 
@@ -683,7 +706,9 @@ void closeSolValve() {
   PORT->Group[g_APinDescription[PIN_VALVE].ulPort].OUTCLR.reg =
       (1 << g_APinDescription[PIN_VALVE].ulPin);
 
-  recordEvent(0, -1, pressureCurrentToBar(R_click.get_EMA_mA()));
+  recordEvent(
+      0, -1,
+      pressureCurrentToBar(tank_RClick.get_EMA_mA(), TANK_PRESS_CALIBRATION));
   // Log valve close event
 
   DEBUG_PRINTLN("SOLENOID_VALVE_CLOSED"); // Valve closed confirmation (debug
@@ -748,14 +773,15 @@ void readPressure(bool valveOpen) {
   // where I is the 4-20mA current output
   setLedColor(COLOR_READING); // Show color during reading
   Serial.print("P");
-  Serial.println(pressureCurrentToBar(R_click.get_EMA_mA()));
+  Serial.println(
+      pressureCurrentToBar(tank_RClick.get_EMA_mA(), TANK_PRESS_CALIBRATION));
 
   // Restore LED color based on valve state
   setLedColor(valveOpen ? COLOR_VALVE_OPEN : COLOR_IDLE);
   DEBUG_PRINT("R Click bitvalue: ");
-  DEBUG_PRINTLN(R_click.get_EMA_bitval());
+  DEBUG_PRINTLN(tank_RClick.get_EMA_bitval());
   DEBUG_PRINT("R Click mA: ");
-  DEBUG_PRINTLN(R_click.get_EMA_mA());
+  DEBUG_PRINTLN(tank_RClick.get_EMA_mA());
 }
 
 void readTemperatureHumidity(bool valveOpen) {
@@ -1201,7 +1227,8 @@ void loop() {
       // Proportional valve follows mA column regardless of solenoid enable
       valve.set_mA(value_array[sequenceIndex]);
       recordEvent(-1, value_array[sequenceIndex],
-                  pressureCurrentToBar(R_click.get_EMA_mA()));
+                  pressureCurrentToBar(tank_RClick.get_EMA_mA(),
+                                       TANK_PRESS_CALIBRATION));
 
       // Solenoid enable controls only the solenoid valve state
       if (enable && !solValveOpen) {
@@ -1265,7 +1292,8 @@ void loop() {
   }
 
   // Pressure sensor must be called regularly to maintain exp. moving average
-  R_click.poll_EMA();
+  tank_RClick.poll_EMA();
+  neb_Rclick.poll_EMA();
 
   // =======================================================================
   // LOOP PHASE 2/4: Mode processors
@@ -1306,7 +1334,8 @@ void loop() {
       StatusQuery,
       Help,
       SetValve,
-      SetPressure,
+      SetTankPressure,
+      SetNebPressure,
       OpenSolenoid,
       CloseSolenoid,
       Quit,
@@ -1315,7 +1344,8 @@ void loop() {
       LightToggle,
       FanSpeed,
       NebuliserToggle,
-      ReadPressure,
+      ReadTankPressure,
+      ReadNebPressure,
       ReadTempHumidity,
       WaitSet,
       WaitQuery,
@@ -1338,7 +1368,9 @@ void loop() {
       if (strncmp(cmd, "S?", 2) == 0)
         return CommandId::StatusQuery;
       if (strncmp(cmd, "P?", 2) == 0)
-        return CommandId::ReadPressure;
+        return CommandId::ReadTankPressure;
+      if (strncmp(cmd, "M?", 2) == 0)
+        return CommandId::ReadNebPressure;
       if (strncmp(cmd, "T?", 2) == 0)
         return CommandId::ReadTempHumidity;
       if (strncmp(cmd, "W?", 2) == 0)
@@ -1354,7 +1386,9 @@ void loop() {
       if (strncmp(cmd, "V", 1) == 0)
         return CommandId::SetValve;
       if (strncmp(cmd, "P", 1) == 0)
-        return CommandId::SetPressure;
+        return CommandId::SetTankPressure;
+      if (strncmp(cmd, "M", 1) == 0)
+        return CommandId::SetNebPressure;
       if (strncmp(cmd, "O", 1) == 0)
         return CommandId::OpenSolenoid;
       if (strncmp(cmd, "C", 1) == 0)
@@ -1482,9 +1516,10 @@ void loop() {
       DEBUG_PRINT("Droplet runs remaining: ");
       DEBUG_PRINTLN(dropletRunsRemaining);
       DEBUG_PRINT("Pressure (raw): ");
-      DEBUG_PRINT(R_click.get_EMA_mA());
+      DEBUG_PRINT(tank_RClick.get_EMA_mA());
       DEBUG_PRINT("Pressure (bar): ");
-      DEBUG_PRINTLN(pressureCurrentToBar(R_click.get_EMA_mA()));
+      DEBUG_PRINTLN(pressureCurrentToBar(tank_RClick.get_EMA_mA(),
+                                         TANK_PRESS_CALIBRATION));
       DEBUG_PRINTLN(" mA");
       DEBUG_PRINT("Uptime: ");
       DEBUG_PRINT(millis() / 1000);
@@ -1509,7 +1544,8 @@ void loop() {
       DEBUG_PRINTLN("?       - Show the on-device help menu");
       DEBUG_PRINTLN("[Control Hardware]");
       DEBUG_PRINTLN("V <mA>  - Set proportional valve current in mA");
-      DEBUG_PRINTLN("P <bar> - Set pressure regulator in bar");
+      DEBUG_PRINTLN("P <bar> - Set tank pressure in bar");
+      DEBUG_PRINTLN("M <bar> - Set nebuliser pressure in bar");
       DEBUG_PRINTLN("O       - Open solenoid valve");
       DEBUG_PRINTLN("C       - Close solenoid valve");
       DEBUG_PRINTLN("I <0..1> - Set light level (pin 5, normalized PWM)");
@@ -1521,6 +1557,7 @@ void loop() {
       DEBUG_PRINTLN("Q       - Quit active modes and return to idle");
       DEBUG_PRINTLN("[Read Out Sensors]");
       DEBUG_PRINTLN("P?      - Read current pressure (bar)");
+      DEBUG_PRINTLN("M?      - Read current nebuliser pressure (bar)");
       DEBUG_PRINTLN("T?      - Read temperature & humidity");
       DEBUG_PRINTLN("[Configuration]");
       DEBUG_PRINTLN("W <us>  - Set wait before run in microseconds");
@@ -1586,7 +1623,7 @@ void loop() {
       break;
     }
 
-    case CommandId::SetPressure: {
+    case CommandId::SetTankPressure: {
       // Command: P <bar>
       // Step 1: mark pressure as user-configured so runs can proceed.
       if (!setPressure) {
@@ -1595,7 +1632,7 @@ void loop() {
 
       // Step 2: parse user target and convert to regulator current.
       float bar = parseFloatInString(command, 1);
-      float current = pressureBarToCurrent(bar);
+      float current = pressureBarToCurrent(bar, TANK_PRESS_CALIBRATION);
 
       // Step 3: validate current range before touching hardware.
       if (!current || current < min_mA_pres_reg || current > max_mA) {
@@ -1610,6 +1647,21 @@ void loop() {
         DEBUG_PRINTLN(pressure.get_last_set_bitval());
         Serial.print("SET_PRESSURE ");
         Serial.println(lastPressure_bar, 2);
+      }
+      break;
+    }
+
+    case CommandId::SetNebPressure: {
+      // Command: M <bar>
+      float bar = parseFloatInString(command, 1);
+      float current = pressureBarToCurrent(bar, NEB_PRESS_CALIBRATION);
+
+      if (!current || current < min_mA_pres_reg || current > max_mA) {
+        printError("Nebuliser pressure input out of range!");
+      } else {
+        neb_pressure.set_mA(current);
+        Serial.print("SET_NEB_PRESSURE ");
+        Serial.println(bar, 2);
       }
       break;
     }
@@ -1740,8 +1792,16 @@ void loop() {
       break;
     }
 
-    case CommandId::ReadPressure:
+    case CommandId::ReadTankPressure:
       readPressure(solValveOpen);
+      break;
+
+    case CommandId::ReadNebPressure:
+      setLedColor(COLOR_READING);
+      Serial.print("M");
+      Serial.println(
+          pressureCurrentToBar(neb_Rclick.get_EMA_mA(), NEB_PRESS_CALIBRATION));
+      setLedColor(solValveOpen ? COLOR_VALVE_OPEN : COLOR_IDLE);
       break;
 
     case CommandId::ReadTempHumidity:
