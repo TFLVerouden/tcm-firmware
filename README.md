@@ -1,6 +1,25 @@
 # Twente Cough Machine Control (MCU)
 
-Firmware for the cough machine controller running on the ItsyBitsy M4. It drives the solenoid valve and proportional valve, handles droplet detection, logs data to QSPI flash, and exposes a serial command interface for experiments.
+Firmware for the cough machine controller running on the [Adafruit ItsyBitsy M4 Express](https://learn.adafruit.com/introducing-adafruit-itsybitsy-m4). It drives the solenoid valve and proportional valve, handles droplet detection, logs data to QSPI flash, and exposes a serial command interface for experiments.
+
+## Hardware
+
+See also the [Twente Cough Machine hardware documentation](https://github.com/TFLVerouden/tcm-hardware/tree/main).
+
+| Function | Pin |
+| --- | --- |
+| Solenoid valve MOSFET gate | 7 |
+| Proportional-valve T-Click chip select | 11 |
+| Pressure-regulator T-Click chip select | 10 |
+| Pressure-sensor R-Click chip select | 2 |
+| Trigger output | 9 |
+| Laser MOSFET gate | 12 |
+| Light PWM output | 5 |
+| Fan PWM output | 3 |
+| Nebuliser enable | A3 |
+| Photodetector input | A2 |
+
+All controlled outputs start LOW at boot. The pressure regulator restores its last valid saved setting from QSPI flash; when no valid setting is available, it uses the firmware default of 4.0 mA. Pressure conversion and sensor calibration constants are defined in [src/main.cpp](src/main.cpp).
 
 ## Build & Upload
 
@@ -16,7 +35,7 @@ Commands are ASCII lines terminated by newline (\n). Units are noted per command
 - `ver?`: Show serial protocol version. Replies `PROTO <integer>`.
 - Protocol policy: host and MCU protocol versions must match exactly. Increase this integer only for breaking serial changes.
 - `B <0|1>`: Toggle debug output. Replies `DEBUG_ON` or `DEBUG_OFF`.
-- `S?`: Show system status (debug only). Replies a block delimited by `STATUS_BEGIN` and `STATUS_END`.
+- `S?`: Show system status when debug output is enabled.
 - `?`: Show the on-device help menu.
 
 ### Control Hardware
@@ -41,7 +60,7 @@ Commands are ASCII lines terminated by newline (\n). Units are noted per command
 
 - `W <us>`: Set wait before run (so after sending R command or after detecting droplet) in microseconds. Replies `SET_WAIT <us>`.
 - `W?`: Read current wait before run in microseconds. Replies `W<us>`.
-- `X`: Delete logged CSV files matching `experiment_dataset_*.csv`. Replies `LOGS_CLEARED`.
+- `X`: Delete logged CSV files matching `experiment_log_*.csv`. Replies `LOGS_CLEARED`.
 - `X!`: `X` plus clear persisted state/dataset files. Replies `MEMORY_CLEARED`.
 
 ### Flow curve dataset Handling
