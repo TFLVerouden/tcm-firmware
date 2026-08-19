@@ -654,13 +654,6 @@ void setup() {
   if (!loadDatasetFromFlash()) {
     resetDataArrays();
   }
-
-  // TEMPORARY TEST: run nebuliser for 10s on every boot. Remove after testing.
-  setLedColor(COLOR_WAITING);
-  digitalWrite(PIN_NEB, HIGH);
-  delay(10000);
-  digitalWrite(PIN_NEB, LOW);
-  setLedColor(COLOR_IDLE);
 }
 
 // ============================================================================
