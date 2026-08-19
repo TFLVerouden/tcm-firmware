@@ -23,6 +23,8 @@
 #include "MIKROE_4_20mA_RT_Click.h"
 #include "SdFat.h"
 #include "commands.h"
+#include "controller_state.h"
+#include "flow_curve_dataset.h"
 #include <Adafruit_DotStar.h>
 #include <Adafruit_SHT4x.h>
 #include <Arduino.h>
@@ -160,31 +162,6 @@ bool parseDropletRunCount(const char *command, bool runAfterDetection,
   return false;
 }
 
-// ============================================================================
-// CONTROLLER STATE
-// ============================================================================
-// State shared by the run, droplet-detection, trigger, and laser-test flows.
-enum class LoopMode : uint8_t {
-  Idle,
-  DropletDetect,
-  DelayBeforeRun,
-  ExecutingRun,
-  LaserTest
-};
-
-struct ControllerState {
-  LoopMode mode = LoopMode::Idle;
-  bool solValveOpen = false;
-  bool performingTrigger = false;
-  bool belowThreshold = false;
-  bool detectionBaselineReady = false;
-  uint32_t delayedRunStartTime = 0;
-  uint32_t detectionStartTime = 0;
-  bool runAfterDropletDetection = false;
-  bool pressureConfigured = false;
-  uint32_t laserTestLastPrint = 0;
-};
-
 ControllerState controllerState;
 
 // ============================================================================
@@ -210,21 +187,7 @@ bool debug_enabled = false;
 // ============================================================================
 // FLOW-CURVE DATASET STATE
 // ============================================================================
-// Keeps uploaded rows, their metadata, and the current playback position
-// together. Future modules can depend on this single context instead of a
-// collection of independent global arrays and counters.
-struct FlowCurveDataset {
-  uint32_t timeMs[MAX_DATA_LENGTH];
-  float valveCurrentMa[MAX_DATA_LENGTH];
-  uint8_t solenoidEnabled[MAX_DATA_LENGTH];
-  uint8_t triggerEnabled[MAX_DATA_LENGTH];
-  int receivedCount = 0;
-  int loadedCount = 0;
-  int durationMs = 0;
-  int nextIndex = 0;
-};
-
-FlowCurveDataset dataset;
+FlowCurveDataset<MAX_DATA_LENGTH> dataset;
 char cmd_buf[CMD_BUF_LEN]{'\0'};
 // Create DvG_StreamCommand object on Serial stream.
 DvG_StreamCommand sc(Serial, cmd_buf, CMD_BUF_LEN);
