@@ -31,55 +31,61 @@ Commands are ASCII lines terminated by newline (\n). Units are noted per command
 
 ### Connection & Debugging
 
-- `id?`: Show device ID for auto serial connection. Replies `TCM_control`.
-- `ver?`: Show serial protocol version. Replies `PROTO <integer>`.
-- Protocol policy: host and MCU protocol versions must match exactly. Increase this integer only for breaking serial changes.
-- `B <0|1>`: Toggle debug output. Replies `DEBUG_ON` or `DEBUG_OFF`.
-- `S?`: Show system status when debug output is enabled.
-- `?`: Show the on-device help menu.
+| Command | Description | Reply |
+| --- | --- | --- |
+| `id?` | Show the device identifier for automatic serial connection. | `TCM_control` |
+| `ver?` | Show the serial protocol version. | `PROTO <integer>` |
+| `B <0\|1>` | Disable or enable debug output. | `DEBUG_OFF` or `DEBUG_ON` |
+| `S?` | Show system status when debug output is enabled. | Status lines |
+| `?` | Show the on-device help menu. | Command list |
 
-### Control Hardware
+### Hardware
 
-- `V <mA>`: Set proportional valve current in mA. Replies `SET_VALVE <mA>`.
-- `P <bar>`: Set pressure regulator in bar. Replies `SET_PRESSURE <bar>`.
-- `O`: Open solenoid valve. Replies `SOLENOID_OPENED`.
-- `C`: Close solenoid valve. Replies `SOLENOID_CLOSED`.
-- `I <level>`: Set light level (pin 5) using normalized PWM in range `0.0..1.0`. Replies `SET_LIGHT <level> DUTY <0-255>`.
-- `G`: Send one immediate trigger pulse (width fixed in firmware). Replies `TRIGGER_PULSE_SENT`.
-- `A <0|1>`: Laser test mode off/on (streams photodiode readings when on). Replies `LASER_TEST_ON` or `LASER_TEST_OFF`.
-- `F <val>`: Set fan speed (pin 3). Not yet implemented in hardware — replies `FAN_SPEED_SET` as a placeholder.
-- `N <0|1>`: Nebuliser off/on (pin A3). Seeds the flow with tracer droplets for PIV measurements. Replies `NEBULISER_ON` or `NEBULISER_OFF`.
-- `Q`: Quit all active modes and return to idle. Replies `RETURNED_TO_IDLE`.
+| Command | Description | Reply |
+| --- | --- | --- |
+| `V <mA>` | Set proportional-valve current in mA. | `SET_VALVE <mA>` |
+| `P <bar>` | Set pressure-regulator target in bar. | `SET_PRESSURE <bar>` |
+| `O` | Open the solenoid valve. | `SOLENOID_OPENED` |
+| `C` | Close the solenoid valve. | `SOLENOID_CLOSED` |
+| `I <level>` | Set light output on pin 5 with normalized PWM from `0.0` to `1.0`. | `SET_LIGHT <level> DUTY <0-255>` |
+| `G` | Send one trigger pulse with the firmware-defined width. | `TRIGGER_PULSE_SENT` |
+| `A <0\|1>` | Disable or enable laser test mode; enabled mode streams photodiode readings. | `LASER_TEST_OFF` or `LASER_TEST_ON` |
+| `F <val>` | Set fan speed on pin 3. The hardware implementation is currently a placeholder. | `FAN_SPEED_SET` |
+| `N <0\|1>` | Disable or enable the nebuliser on pin A3. | `NEBULISER_OFF` or `NEBULISER_ON` |
+| `Q` | Quit active modes and return to idle. | `RETURNED_TO_IDLE` |
 
-### Read Out Sensors
+### Sensors
 
-- `P?`: Read current pressure (bar). Replies `P<bar>`.
-- `T?`: Read temperature & humidity. Replies `T<degC> H<%RH>`.
+| Command | Description | Reply |
+| --- | --- | --- |
+| `P?` | Read current pressure in bar. | `P<bar>` |
+| `T?` | Read temperature and relative humidity. | `T<degC> H<%RH>` |
 
 ### Configuration
 
-- `W <us>`: Set wait before run (so after sending R command or after detecting droplet) in microseconds. Replies `SET_WAIT <us>`.
-- `W?`: Read current wait before run in microseconds. Replies `W<us>`.
-- `X`: Delete logged CSV files matching `experiment_log_*.csv`. Replies `LOGS_CLEARED`.
-- `X!`: `X` plus clear persisted state/dataset files. Replies `MEMORY_CLEARED`.
+| Command | Description | Reply |
+| --- | --- | --- |
+| `W <us>` | Set the wait before a run or after droplet detection, in microseconds. | `SET_WAIT <us>` |
+| `W?` | Read the configured wait before run, in microseconds. | `W<us>` |
+| `X` | Delete logged `experiment_log_*.csv` files. | `LOGS_CLEARED` |
+| `X!` | Clear run logs plus persisted state and dataset files. | `MEMORY_CLEARED` |
 
-### Flow curve dataset Handling
+### Dataset
 
-- `L <N> <duration_ms> <csv>`: Load dataset. CSV format: `<ms0>,<mA0>,<e0>,<t0>,<ms1>,<mA1>,<e1>,<t1>,...,<msN>,<mAN>,<eN>,<tN>`.
-	- `e` = solenoid enable (0/1)
-	- `t` = trigger event (0/1)
-	- Trigger is decoupled from solenoid state: `t=1` starts a trigger pulse at that timestamp, independent of valve open/close.
-	- Trigger pulse width is a firmware constant (`TRIGGER_WIDTH` in `main.cpp`).
-	Replies `DATASET_RECEIVED` and `DATASET_SAVED`.
-- `L?`: Show loaded dataset status. Replies `NO_DATASET` or `DATASET: <lines> LINES AND <duration_ms> MS`.
+| Command | Description | Reply |
+| --- | --- | --- |
+| `L <N> <duration_ms> <csv>` | Load a flow curve. Each CSV row is `<ms>,<mA>,<e>,<t>` where `e` is solenoid enable and `t` is a trigger event. | `DATASET_RECEIVED`, then `DATASET_SAVED` |
+| `L?` | Show loaded flow-curve status. | `NO_DATASET` or `DATASET: <lines> LINES AND <duration_ms> MS` |
 
 ### Cough
 
-- `R`: Run the loaded dataset. Replies `STARTING_RUN` (immediate run). Later replies `STARTING_RUN`, `FINISHED`, and file transfer markers when logs are streamed.
-- `D`: Droplet-detect only (continuous). Replies `DROPLET_ARMED` on success and `DROPLET_DETECTED` on each detection.
-- `D <n>`: Droplet-detect only `n` times then stop. Replies `DROPLET_ARMED` on success.
-- `D!`: Droplet-detect then run loaded dataset (continuous). Replies `DROPLET_ARMED` on success.
-- `D! <n>`: Droplet-detect then run loaded dataset `n` times then stop. Replies `DROPLET_ARMED` on success.
+| Command | Description | Reply |
+| --- | --- | --- |
+| `R` | Run the loaded flow curve. | `STARTING_RUN`, `FINISHED`, and log-transfer markers |
+| `D` | Arm continuous droplet detection only. | `DROPLET_ARMED`, then `DROPLET_DETECTED` |
+| `D <n>` | Detect `n` droplets, then stop. | `DROPLET_ARMED` |
+| `D!` | Continuously detect droplets and run the loaded flow curve after each detection. | `DROPLET_ARMED` |
+| `D! <n>` | Detect `n` droplets and run the loaded flow curve after each detection. | `DROPLET_ARMED` |
 
 ## Files
 
