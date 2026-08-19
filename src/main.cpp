@@ -1272,6 +1272,185 @@ void stopActiveModes(bool setIdleLed = true) {
   }
 }
 
+// Stream photodetector readings at a fixed cadence while laser-test mode is
+// active. The laser-test threshold notice is informational and does not change
+// the active mode or output state.
+void processLaserTest() {
+  if (controllerState.mode != LoopMode::LaserTest) {
+    return;
+  }
+
+  uint32_t nowMs = millis();
+  if (nowMs - controllerState.laserTestLastPrint <
+      LASER_TEST_STREAM_INTERVAL_MS) {
+    return;
+  }
+
+  float signalVoltage = readPhotodetector();
+  Serial.print("A");
+  Serial.println(signalVoltage, SIGNAL_PRINT_DECIMAL_PLACES);
+  if (signalVoltage <= PDA_THR) {
+    Serial.println("LASER_TEST_BELOW_THRESHOLD");
+  }
+  controllerState.laserTestLastPrint = nowMs;
+}
+
+// Wait for the configured pre-trigger delay, keeping the waiting LED active.
+// Once it expires, transition through the shared dataset execution startup.
+void processDelayedRunStart() {
+  if (controllerState.mode != LoopMode::DelayBeforeRun) {
+    return;
+  }
+
+  if (micros() - controllerState.delayedRunStartTime < pre_trigger_delay_us) {
+    setLedColor(COLOR_WAITING);
+    return;
+  }
+
+  beginDatasetExecution("EXECUTING_DATASET");
+}
+
+// Process laser photodetector samples while droplet detection is armed.
+// Returns true after a low-signal fault, which tells the scheduler to skip the
+// rest of this iteration after returning the controller to a safe idle state.
+bool processDropletDetection() {
+  if (controllerState.mode != LoopMode::DropletDetect) {
+    return false;
+  }
+
+  if (micros() - controllerState.detectionStartTime < pda_delay) {
+    return false;
+  }
+
+  float signalVoltage = readPhotodetector();
+  if (signalVoltage <= PDA_MIN_VALID) {
+    printError("PDA signal too low! Check photodetector or laser power.");
+    stopLaser();
+    controllerState.mode = LoopMode::Idle;
+    controllerState.belowThreshold = false;
+    controllerState.detectionBaselineReady = false;
+    dropletRunsRemaining = 0;
+    setLedColor(COLOR_IDLE);
+    return true;
+  }
+
+  bool signalBelowThreshold = signalVoltage < PDA_THR;
+  if (!controllerState.detectionBaselineReady) {
+    controllerState.belowThreshold = signalBelowThreshold;
+    controllerState.detectionBaselineReady = true;
+    return false;
+  }
+
+  bool fallingEdgeDetected =
+      !controllerState.belowThreshold && signalBelowThreshold;
+  if (!fallingEdgeDetected) {
+    controllerState.belowThreshold = signalBelowThreshold;
+    return false;
+  }
+
+  controllerState.belowThreshold = true;
+  if (dropletRunsRemaining > 0) {
+    dropletRunsRemaining--;
+  }
+
+  stopLaser();
+  controllerState.mode = LoopMode::Idle;
+  setLedColor(COLOR_DROPLET);
+  Serial.println("DROPLET_DETECTED");
+
+  if (controllerState.runAfterDropletDetection) {
+    controllerState.mode = LoopMode::DelayBeforeRun;
+    controllerState.delayedRunStartTime = micros();
+  } else if (dropletRunsRemaining != 0) {
+    if (!startDropletDetection(false)) {
+      dropletRunsRemaining = 0;
+      setLedColor(COLOR_IDLE);
+    }
+  } else {
+    setLedColor(COLOR_IDLE);
+  }
+  return false;
+}
+
+// Apply due flow-curve rows and finish the run once its duration and all rows
+// are complete. Returns true after completion so the scheduler skips command
+// processing until the next loop iteration.
+bool processDatasetExecution() {
+  if (controllerState.mode != LoopMode::ExecutingRun) {
+    return false;
+  }
+
+  uint32_t nowMs = (micros() - runCallTime) / DATASET_TIME_SCALE_US_PER_MS;
+  while (sequenceIndex < dataIndex && nowMs >= time_array[sequenceIndex]) {
+    uint8_t enable = sol_enable_array[sequenceIndex];
+    uint8_t trigger = trig_enable_array[sequenceIndex];
+
+    valve.set_mA(value_array[sequenceIndex]);
+    recordEvent(
+        -1, value_array[sequenceIndex],
+        pressureCurrentToBar(tank_RClick.get_EMA_mA(), TANK_PRESS_CALIBRATION));
+
+    if (enable && !controllerState.solValveOpen) {
+      openSolValve();
+      controllerState.solValveOpen = true;
+      setLedColor(COLOR_VALVE_OPEN);
+    } else if (!enable && controllerState.solValveOpen) {
+      closeSolValve();
+      controllerState.solValveOpen = false;
+    }
+
+    if (trigger) {
+      trigOut();
+      markRunTrigger();
+      controllerState.performingTrigger = true;
+      tick = micros();
+    }
+    sequenceIndex++;
+  }
+
+  if (nowMs < static_cast<uint32_t>(datasetDuration) ||
+      sequenceIndex < dataIndex) {
+    return false;
+  }
+
+  valve.set_mA(DEF_CURR_VALVE_MA);
+  if (controllerState.solValveOpen) {
+    closeSolValve();
+    controllerState.solValveOpen = false;
+  }
+
+  controllerState.mode = LoopMode::Idle;
+  sequenceIndex = 0;
+  setLedColor(COLOR_OFF);
+  Serial.println("FINISHED");
+  saveToFlash();
+  dumpToSerial();
+
+  if (dropletRunsRemaining != 0 && !startDropletDetection(true)) {
+    dropletRunsRemaining = 0;
+  }
+  return true;
+}
+
+// Start a finite or continuous droplet mode after returning all outputs to a
+// known state. Detect-and-run modes create a fresh log-file session; detect-only
+// modes retain the existing session because they do not create run logs.
+void armDropletMode(bool runAfterDetection, int32_t requestedCount,
+                    bool resetRunSessionFiles) {
+  stopActiveModes(false);
+  dropletRunsRemaining = requestedCount;
+
+  if (resetRunSessionFiles) {
+    startRunSession();
+  }
+
+  if (!startDropletDetection(runAfterDetection)) {
+    dropletRunsRemaining = 0;
+    return;
+  }
+  Serial.println("DROPLET_ARMED");
+}
+
 // ============================================================================
 // MAIN LOOP
 // ============================================================================
@@ -1299,228 +1478,14 @@ void loop() {
   // - LaserTest -> Idle: A 0 or stopActiveModes(...)
   // - Any mode -> Idle: stopActiveModes(...)
 
-  // Local aliases keep this incremental refactor readable while the helpers
-  // below are still lambdas. They will be replaced by named functions next.
+  // These aliases keep the remaining command switch readable while command
+  // handlers are still being extracted from loop().
   LoopMode &mode = controllerState.mode;
   bool &solValveOpen = controllerState.solValveOpen;
   bool &performingTrigger = controllerState.performingTrigger;
-  bool &belowThreshold = controllerState.belowThreshold;
-  bool &detectionBaselineReady = controllerState.detectionBaselineReady;
   uint32_t &delayedRunStartTime = controllerState.delayedRunStartTime;
-  uint32_t &detectionStartTime = controllerState.detectionStartTime;
-  bool &runAfterDropletDetection = controllerState.runAfterDropletDetection;
   bool &setPressure = controllerState.pressureConfigured;
   uint32_t &laserTestLastPrint = controllerState.laserTestLastPrint;
-
-  /* ----------------------------------------------------------------------- */
-  /* [HELPER] Process droplet detection state machine                         */
-  /* ----------------------------------------------------------------------- */
-  auto processDropletDetection = [&]() -> bool {
-    // Responsibility:
-    // - Enforce pda_delay dead-time
-    // - Detect falling-edge droplet events with baseline initialization
-    // - Transition to DelayBeforeRun or re-arm/idle depending on mode/count
-
-    // Returns true when the current loop iteration should exit early
-    // (used after hard PDA fault handling).
-    if (mode != LoopMode::DropletDetect) {
-      return false;
-    }
-
-    // Step 1: enforce dead-time after arming/re-arming before reading PDA.
-    uint32_t elapsedSinceStart = micros() - detectionStartTime;
-    if (elapsedSinceStart < pda_delay) {
-      return false;
-    }
-
-    // Step 2: acquire the current photodetector voltage.
-    float signalVoltage = readPhotodetector();
-
-    // Step 3: fail-safe check. Near-zero voltage means detection is unreliable.
-    if (signalVoltage <= PDA_MIN_VALID) {
-      printError("PDA signal too low! Check photodetector or laser power.");
-      stopLaser();
-      mode = LoopMode::Idle;
-      belowThreshold = false;
-      detectionBaselineReady = false;
-      dropletRunsRemaining = 0;
-      setLedColor(COLOR_IDLE);
-      return true;
-    }
-
-    bool signalBelowThreshold = (signalVoltage < PDA_THR);
-
-    // Step 4: initialize edge-tracking baseline once after each arm/re-arm.
-    // This prevents immediate retrigger if a droplet is still blocking light.
-    if (!detectionBaselineReady) {
-      belowThreshold = signalBelowThreshold;
-      detectionBaselineReady = true;
-      return false;
-    }
-
-    // Step 5: detect only a true falling edge (high -> low).
-    bool fallingEdgeDetected = (!belowThreshold && signalBelowThreshold);
-    if (!fallingEdgeDetected) {
-      // Keep edge state synchronized while waiting for next droplet.
-      belowThreshold = signalBelowThreshold;
-      return false;
-    }
-
-    // Step 6: droplet event accepted. Stop laser and publish event.
-    belowThreshold = true;
-    if (dropletRunsRemaining > 0) {
-      dropletRunsRemaining--;
-    }
-
-    stopLaser();
-    mode = LoopMode::Idle;
-
-    setLedColor(COLOR_DROPLET);
-    Serial.println("DROPLET_DETECTED");
-
-    // Step 7: choose post-detection action based on selected mode.
-    if (runAfterDropletDetection) {
-      // Detect-and-run mode: start pre-run wait timer.
-      mode = LoopMode::DelayBeforeRun;
-      delayedRunStartTime = micros();
-    } else if (dropletRunsRemaining != 0) {
-      // Detect-only multi mode: immediately re-arm; pda_delay still applies
-      // because processDropletDetection() always waits before sampling.
-      if (!startDropletDetection(false)) {
-        dropletRunsRemaining = 0;
-        setLedColor(COLOR_IDLE);
-      }
-    } else {
-      // Detect-only single/final event: return to idle indication.
-      setLedColor(COLOR_IDLE);
-    }
-
-    return false;
-  };
-
-  /* ----------------------------------------------------------------------- */
-  /* [HELPER] Process laser test mode                                        */
-  /* ----------------------------------------------------------------------- */
-  auto processLaserTest = [&]() {
-    if (mode != LoopMode::LaserTest) {
-      return;
-    }
-
-    uint32_t now_ms = millis();
-    if (now_ms - laserTestLastPrint >= LASER_TEST_STREAM_INTERVAL_MS) {
-      float signalVoltage = readPhotodetector();
-      Serial.print("A");
-      Serial.println(signalVoltage, SIGNAL_PRINT_DECIMAL_PLACES);
-
-      if (signalVoltage <= PDA_THR) {
-        Serial.println("LASER_TEST_BELOW_THRESHOLD");
-      }
-
-      laserTestLastPrint = now_ms;
-    }
-  };
-
-  /* ----------------------------------------------------------------------- */
-  /* [HELPER] Process delayed flow-curve run start                           */
-  /* ----------------------------------------------------------------------- */
-  auto processDelayedRunStart = [&]() {
-    // Responsibility:
-    // - Hold execution in DelayBeforeRun until pre-trigger delay has elapsed
-    // - Transition mode to ExecutingRun when delay is complete
-    // - Initialize run timing/indices and output state for execution start
-
-    // Wait for configured pre-trigger delay before starting flow curve
-    if (mode != LoopMode::DelayBeforeRun) {
-      return;
-    }
-
-    uint32_t elapsed = micros() - delayedRunStartTime;
-
-    if (elapsed < pre_trigger_delay_us) {
-      setLedColor(COLOR_WAITING);
-      return;
-    }
-
-    beginDatasetExecution("EXECUTING_DATASET");
-  };
-
-  /* ----------------------------------------------------------------------- */
-  /* [HELPER] Process active flow-curve execution                            */
-  /* ----------------------------------------------------------------------- */
-  auto processDatasetExecution = [&]() -> bool {
-    // Responsibility:
-    // - Apply due flow-curve points based on elapsed run time
-    // - Drive proportional + solenoid valve outputs and trigger pulse state
-    // - Finalize run (save + stream logs) and transition back to Idle
-
-    // Returns true when run completion should end this loop iteration.
-    if (mode != LoopMode::ExecutingRun) {
-      return false;
-    }
-
-    // Calculate time since start execution
-    uint32_t now = (micros() - runCallTime); // Time since RUN is called [µs]
-    uint32_t now_ms = now / DATASET_TIME_SCALE_US_PER_MS;
-
-    // Apply all dataset points that are due
-    while (sequenceIndex < dataIndex && now_ms >= time_array[sequenceIndex]) {
-      uint8_t enable = sol_enable_array[sequenceIndex];
-      uint8_t trigger = trig_enable_array[sequenceIndex];
-
-      // Proportional valve follows mA column regardless of solenoid enable
-      valve.set_mA(value_array[sequenceIndex]);
-      recordEvent(-1, value_array[sequenceIndex],
-                  pressureCurrentToBar(tank_RClick.get_EMA_mA(),
-                                       TANK_PRESS_CALIBRATION));
-
-      // Solenoid enable controls only the solenoid valve state
-      if (enable && !solValveOpen) {
-        openSolValve();
-        solValveOpen = true;
-        setLedColor(COLOR_VALVE_OPEN);
-      } else if (!enable && solValveOpen) {
-        closeSolValve();
-        solValveOpen = false;
-      }
-
-      // Trigger column controls trigger pulses independently of solenoid state
-      if (trigger) {
-        trigOut();
-        markRunTrigger();
-        performingTrigger = true;
-        tick = micros();
-      }
-
-      sequenceIndex++;
-    }
-
-    // End condition: dataset duration elapsed AND all points processed
-    if (now_ms >= (uint32_t)datasetDuration && sequenceIndex >= dataIndex) {
-      valve.set_mA(DEF_CURR_VALVE_MA);
-      if (solValveOpen) {
-        closeSolValve();
-        solValveOpen = false;
-      }
-
-      mode = LoopMode::Idle;
-      sequenceIndex = 0;
-      setLedColor(COLOR_OFF);
-      Serial.println("FINISHED");
-      // Persist and stream the log for this run
-      saveToFlash();
-      dumpToSerial();
-
-      // If in multi-run mode, re-arm detection for the next droplet
-      if (dropletRunsRemaining != 0) {
-        if (!startDropletDetection(true)) {
-          dropletRunsRemaining = 0;
-        }
-      }
-      return true;
-    }
-
-    return false;
-  };
 
   // =======================================================================
   // LOOP PHASE 1/4: Fast periodic service
@@ -1560,29 +1525,6 @@ void loop() {
     // Fetch and decode the latest command line
     char *command =
         sc.getCommand(); // Pointer to memory location of serial buffer contents
-
-    auto armDropletMode = [&](bool runAfterDetection, int32_t requestedCount,
-                              bool resetRunSessionFiles) {
-      // Step 1: force a clean mode boundary (resets mode flags and outputs).
-      stopActiveModes(false);
-
-      // Step 2: persist requested run count in global control state.
-      // -1 => continuous, >0 => finite number of droplet triggers.
-      dropletRunsRemaining = requestedCount;
-
-      // Step 3: optionally reset per-session run files/counters for modes
-      // that execute and log flow-curve runs (D! variants).
-      if (resetRunSessionFiles) {
-        startRunSession();
-      }
-
-      // Step 4: arm droplet detection state machine.
-      if (!startDropletDetection(runAfterDetection)) {
-        dropletRunsRemaining = 0;
-      } else {
-        Serial.println("DROPLET_ARMED");
-      }
-    };
 
     CommandId commandId = parseCommandId(command);
     switch (commandId) {
