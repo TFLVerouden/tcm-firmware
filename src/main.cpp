@@ -28,13 +28,6 @@
 #include <stdlib.h>
 
 // ============================================================================
-// HOST <-> MCU PROTOCOL VERSIONING
-// ============================================================================
-// Versioned serial contract used by host software to enforce compatibility.
-// Keep this as a single integer and bump only on breaking serial changes.
-const uint8_t TCM_PROTOCOL_VERSION = 6;
-
-// ============================================================================
 // FORWARD DECLARATIONS
 // ============================================================================
 void printError(const char *message);
@@ -42,7 +35,108 @@ template <typename T> void printError(const char *message, T value);
 void resetDataArrays();
 
 // ============================================================================
-// DEBUG CONFIGURATION
+// CONFIGURATION
+// ============================================================================
+// Keep fixed hardware, protocol, timing, calibration, and buffer values here.
+// Runtime state and hardware objects begin in the next section.
+
+// Protocol and serial communication
+const uint8_t TCM_PROTOCOL_VERSION = 6;
+const uint32_t SERIAL_BAUD_RATE = 115200;
+const uint32_t SERIAL_TIMEOUT_MS = 10;
+
+// Hardware pin mapping for the ItsyBitsy M4
+const int PIN_VALVE = 7;           // MOSFET gate pin for solenoid valve control
+const int PIN_PROP_VALVE = 11;     // Chip select for proportional valve
+const int PIN_TANK_CS_TCLICK = 10; // Chip select for tank pressure regulator
+const int PIN_TANK_CS_RCLICK = 2;  // Chip select for tank pressure sensor (SPI)
+const int PIN_NEB_CS_TCLICK = 4; // Chip select for nebuliser pressure regulator
+const int PIN_NEB_CS_RCLICK =
+    13;                   // Chip select for nebuliser pressure sensor (SPI)
+const int PIN_TRIG = 9;   // Trigger output for peripheral synchronization
+const int PIN_LASER = 12; // Laser MOSFET gate pin for droplet detection
+const int PIN_LIGHT = 5;  // Light output pin (PWM brightness)
+const int PIN_FAN = 3;    // Fan speed control pin (PWM, not yet implemented)
+const int PIN_NEB = A3;   // Nebuliser control pin (digital)
+const int PIN_PDA = A2;   // Analog input from photodetector
+// PIN_DOTSTAR_DATA and PIN_DOTSTAR_CLK are defined in variant.h.
+
+// Buffer, file, and dataset persistence limits
+const int MAX_DATA_LENGTH = 2000;
+const uint16_t CMD_BUF_LEN = 32000;
+const int MAX_RECORDS = 2000;
+const size_t PERSISTENT_STATE_LINE_LENGTH = 64;
+const size_t FLASH_ENTRY_NAME_LENGTH = 64;
+const size_t RUN_LOG_FILENAME_LENGTH = 32;
+const char *STATE_FILE = "run_state.txt";
+const char *DATASET_FILE = "dataset_state.bin";
+const char *RUN_LOG_PREFIX = "experiment_log_";
+const char *RUN_LOG_FILENAME_FORMAT = "experiment_log_%04lu.csv";
+const uint32_t DATASET_MAGIC = 0x54434D46; // "TCMF"
+const uint8_t DATASET_FORMAT_VERSION = 2;
+
+// Run, trigger, and user-interface timing
+const uint32_t TRIGGER_WIDTH = 10000; // Trigger pulse width [us]
+const uint32_t DEFAULT_PDA_DELAY_US = 10000;
+const uint32_t DATASET_TIME_SCALE_US_PER_MS = 1000;
+const uint32_t LASER_TEST_STREAM_INTERVAL_MS = 50;
+const uint8_t ERROR_LED_FLASH_COUNT = 5;
+const uint32_t ERROR_LED_FLASH_INTERVAL_MS = 300;
+
+// Sensor acquisition and ADC conversion
+const uint32_t RCLICK_EMA_INTERVAL = 10; // Sampling interval for EMA [us]
+const float RCLICK_EMA_LP_FREQ =
+    500.0f; // Low-pass filter cutoff frequency [Hz]
+const uint8_t ADC_RESOLUTION_BITS = 12;
+const float ADC_MAX_VALUE = 4095.0f;
+const float ADC_REFERENCE_VOLTAGE = 3.3f;
+const uint8_t SIGNAL_PRINT_DECIMAL_PLACES = 3;
+const float PDA_R1 = 6710.0f;     // Voltage divider resistor [Ohm]
+const float PDA_R2 = 3260.0f;     // Voltage divider resistor [Ohm]
+const float PDA_THR = 4.8f;       // Droplet detection threshold [V]
+const float PDA_MIN_VALID = 0.1f; // Minimum valid signal [V]
+
+// Pressure conversion and 4-20 mA calibration
+struct PressureCalibration {
+  float set_bar_per_mA;
+  float set_bar_offset;
+  float read_bar_per_mA;
+  float read_bar_offset;
+};
+
+const PressureCalibration TANK_PRESS_CALIBRATION{
+    0.62242857f, 2.48821429f, 0.6255112463192659f, -2.534598501736508f};
+// TODO: Replace with calibration values for the nebuliser pressure loop.
+const PressureCalibration NEB_PRESS_CALIBRATION{
+    0.62242857f, 2.48821429f, 0.6255112463192659f, -2.534598501736508f};
+const RT_Click_Calibration R_CLICK_CALIBRATION{4.04, 10.98, 806, 2191};
+const RT_Click_Calibration T_CLICK_CALIBRATION{3.97, 19.90, 796, 3982};
+
+// Actuator and display defaults
+const float MAX_CURR_MA = 20.0f;
+const float MIN_CURR_VALVE_MA = 12.0f;
+const float MIN_CURR_PRESS_REG_MA = 3.9f;
+const float DEF_CURR_VALVE_MA = 12.0f;
+const float DEF_PRESSURE = 4.0f;
+const uint8_t LED_BRIGHTNESS = 255;
+const float LIGHT_LEVEL_MIN = 0.0f;
+const float LIGHT_LEVEL_MAX = 1.0f;
+const float PWM_MAX_DUTY = 255.0f;
+
+// DotStar colors use BGR format and avoid pure red for laser goggles.
+const uint32_t COLOR_IDLE = 0x001000;
+const uint32_t COLOR_VALVE_OPEN = 0x00FF00;
+const uint32_t COLOR_ERROR = 0xFF4000;
+const uint32_t COLOR_READING = 0xFF0040;
+const uint32_t COLOR_LASER = 0x100000;
+const uint32_t COLOR_DROPLET = 0xFF0000;
+const uint32_t COLOR_WAITING = 0x400040;
+const uint32_t COLOR_RECEIVING = 0x100000;
+const uint32_t COLOR_EXECUTING = 0xFF0000;
+const uint32_t COLOR_OFF = 0x000000;
+
+// ============================================================================
+// RUNTIME STATE AND HARDWARE
 // ============================================================================
 // Debug output is disabled by default and can be enabled via the B command.
 bool debug_enabled = false;
@@ -62,32 +156,9 @@ bool debug_enabled = false;
   } while (0)
 
 // ============================================================================
-// PIN DEFINITIONS
-// ============================================================================
-// TODO: Clean up definition names, go critically through code
-// Hardware pin mapping for the ItsyBitsy M4
-const int PIN_VALVE = 7;           // MOSFET gate pin for solenoid valve control
-const int PIN_PROP_VALVE = 11;     // Chip select for proportional valve
-const int PIN_TANK_CS_TCLICK = 10; // Chip select for tank pressure regulator
-const int PIN_TANK_CS_RCLICK = 2;  // Chip select for tank pressure sensor (SPI)
-const int PIN_NEB_CS_TCLICK = 4; // Chip select for nebuliser pressure regulator
-const int PIN_NEB_CS_RCLICK =
-    13;                 // Chip select for nebuliser pressure sensor (SPI)
-const int PIN_TRIG = 9; // Trigger output for peripheral devices synchronization
-const int PIN_LASER = 12; // Laser MOSFET gate pin for droplet detection
-const int PIN_LIGHT = 5;  // Light output pin (PWM brightness)
-const int PIN_FAN = 3;    // Fan speed control pin (PWM, not yet implemented)
-const int PIN_NEB = A3;   // Nebuliser control pin (digital)
-const int PIN_PDA = A2;   // Analog input from photodetector
-// Note: PIN_DOTSTAR_DATA and PIN_DOTSTAR_CLK are already defined in variant.h
-
-// ============================================================================
 // FLOW-CURVE DATASET BUFFERS
 // ============================================================================
 // Buffers used for receiving and storing the uploaded dataset
-const int MAX_DATA_LENGTH = 2000; // Max serial dataset size
-const uint16_t CMD_BUF_LEN =
-    32000;                       // RAM size allocation for Serial buffer size
 int incomingCount = 0;           // Declare incoming dataset length globally
 char cmd_buf[CMD_BUF_LEN]{'\0'}; // Instantiate empty Serial buffer
 uint32_t time_array[MAX_DATA_LENGTH];       // Time dataset
@@ -126,127 +197,54 @@ struct __attribute__((__packed__)) LogEntry {
   float pressure;     // 4 bytes
 };
 
-// INITIALIZE LOGGING ARRAY IN RAM
-#define MAX_RECORDS 2000
+// Initialize logging array in RAM
 LogEntry logs[MAX_RECORDS];
 int currentCount = 0;
 bool runLogActive = false;      // True only while a dataset run is active
 uint32_t runLogTriggerUs = 0;   // First trigger timestamp for current run [us]
 bool runLogTriggerSeen = false; // True once the run-local trigger has fired
 uint32_t runCounter = 0;        // Per-session run index (starts at 0 each boot)
-char lastSavedFilename[32] = ""; // Latest file saved during this session
-float lastPressure_bar = 0.0f;   // Persisted pressure regulator setting [bar]
+char lastSavedFilename[RUN_LOG_FILENAME_LENGTH] = ""; // Latest saved file
+float lastPressure_bar = 0.0f; // Persisted pressure regulator setting [bar]
 bool pressureInitializedFromFlash = false; // Valid persisted pressure loaded
 bool waitInitializedFromFlash = false;     // Valid persisted wait loaded
 
-// ============================================================================
-// TIMING PARAMETERS
-// ============================================================================
-// Timing constants for trigger, droplet detection, and run scheduling
-const uint32_t TRIGGER_WIDTH = 10000; // Trigger pulse width [µs] (10ms)
-uint32_t tick = 0;                    // Timestamp for timing events [µs]
+// Timing state for trigger, droplet detection, and run scheduling
+uint32_t tick = 0; // Timestamp for timing events [µs]
 
 uint32_t pre_trigger_delay_us =
     0; // Delay between droplet detection/RUN command and opening valve [µs] ->
        // example value 59500 (outdated)
 uint32_t pda_delay =
-    10000; // Delay before photodiode starts detecting again [µs]
+    DEFAULT_PDA_DELAY_US; // Delay before photodiode starts detecting again [µs]
 
 int32_t dropletRunsRemaining = 0; // -1 = continuous, 0 = idle, >0 = remaining
 
 // This is just another ticker
 uint32_t runCallTime = 0; // Time elapsed since "RUN" command [µs]
 
-// ============================================================================
-// PRESSURE CONVERSION CALIBRATION
-// ============================================================================
-// Setpoint conversion (requested pressure [bar] -> regulator current [mA])
-struct PressureCalibration {
-  float set_bar_per_mA;
-  float set_bar_offset;
-  float read_bar_per_mA;
-  float read_bar_offset;
-};
-
-const PressureCalibration TANK_PRESS_CALIBRATION{
-    0.62242857f, 2.48821429f, 0.6255112463192659f, -2.534598501736508f};
-
-// TODO: Replace with calibration values for the nebuliser pressure loop.
-const PressureCalibration NEB_PRESS_CALIBRATION{
-    0.62242857f, 2.48821429f, 0.6255112463192659f, -2.534598501736508f};
-
-// ============================================================================
-// PERSISTENCE FILE KEYS + SESSION TRACKING
-// ============================================================================
+// Persistent state and session tracking
 uint32_t lastSessionCount = 0;
-const char *STATE_FILE = "run_state.txt";       // Stores persistent settings
-const char *DATASET_FILE = "dataset_state.bin"; // Stores last loaded flow curve
-
-// ============================================================================
-// SENSOR CONFIGURATION
-// ============================================================================
 // Pressure sensor (4-20mA R-Click) with exponential moving average filtering
-const uint32_t EMA_INTERVAL = 10; // Sampling interval for EMA [µs]
-const float EMA_LP_FREQ = 500.;   // Low-pass filter cutoff frequency [Hz]
-const uint32_t FLOW_CURVE_PRESSURE_STREAM_INTERVAL_MS =
-    1; // Temporary test stream interval during run [ms]
-// Initialize with calibration values: p1_mA, p2_mA, p1_bitval, p2_bitval
-R_Click tank_RClick(PIN_TANK_CS_RCLICK,
-                    RT_Click_Calibration{4.04, 10.98, 806, 2191}, EMA_INTERVAL,
-                    EMA_LP_FREQ);
+R_Click tank_RClick(PIN_TANK_CS_RCLICK, R_CLICK_CALIBRATION,
+                    RCLICK_EMA_INTERVAL, RCLICK_EMA_LP_FREQ);
 
 // TODO: Replace with calibration values for the nebuliser R-Click.
-R_Click neb_RClick(PIN_NEB_CS_RCLICK,
-                   RT_Click_Calibration{4.04, 10.98, 806, 2191}, EMA_INTERVAL,
-                   EMA_LP_FREQ);
+R_Click neb_RClick(PIN_NEB_CS_RCLICK, R_CLICK_CALIBRATION, RCLICK_EMA_INTERVAL,
+                   RCLICK_EMA_LP_FREQ);
 
 // Temperature & humidity sensor (SHT4x I2C)
 Adafruit_SHT4x sht4;
 
-// Photodetector configuration for droplet detection
-const float PDA_R1 = 6710.0;     // Voltage divider resistor [Ohm]
-const float PDA_R2 = 3260.0;     // Voltage divider resistor [Ohm]
-const float PDA_THR = 4.8;       // Droplet detection threshold [V]
-const float PDA_MIN_VALID = 0.1; // Minimum valid signal [V] (detect PSU off)
-
-// ============================================================================
-// T CLICK CONFIGURATION (proportional valve and pressure regulator)
-// ============================================================================
 // Proportional valve and pressure regulator interfaces
-T_Click valve(PIN_PROP_VALVE, RT_Click_Calibration{3.97, 19.90, 796, 3982});
-T_Click pressure(PIN_TANK_CS_TCLICK,
-                 RT_Click_Calibration{3.97, 19.90, 796, 3982});
+T_Click valve(PIN_PROP_VALVE, T_CLICK_CALIBRATION);
+T_Click pressure(PIN_TANK_CS_TCLICK, T_CLICK_CALIBRATION);
 
 // TODO: Replace with calibration values for the nebuliser T-Click.
-T_Click neb_pressure(PIN_NEB_CS_TCLICK,
-                     RT_Click_Calibration{3.97, 19.90, 796, 3982});
+T_Click neb_pressure(PIN_NEB_CS_TCLICK, T_CLICK_CALIBRATION);
 
-// Define default T Click values
-const float max_mA = 20.0;
-const float min_mA_valve = 12.0;
-const float min_mA_pres_reg = 3.9;
-const float default_valve = 12.0;   // mA
-const float default_pressure = 4.0; // mA
-
-// ============================================================================
-// LED CONFIGURATION
-// ============================================================================
 // DotStar RGB LED (using board's built-in DotStar on pins 8 and 6)
 Adafruit_DotStar led(1, PIN_DOTSTAR_DATA, PIN_DOTSTAR_CLK, DOTSTAR_BGR);
-
-// LED color definitions (avoiding pure red for laser goggle compatibility)
-// Colors use BGR format: Blue, Green, Red
-const uint32_t COLOR_IDLE = 0x001000;       // Dim green - system ready
-const uint32_t COLOR_VALVE_OPEN = 0x00FF00; // Bright green - valve active
-const uint32_t COLOR_ERROR = 0xFF4000;      // Orange - error state
-const uint32_t COLOR_READING = 0xFF0040;    // Cyan - taking measurement
-const uint32_t COLOR_LASER = 0x100000;      // Dim blue - started detection
-const uint32_t COLOR_DROPLET = 0xFF0000;    // Bright blue - droplet detected
-const uint32_t COLOR_WAITING = 0x400040;   // Purple - waiting for valve opening
-const uint32_t COLOR_RECEIVING = 0x100000; // Dim red - receiving flow curve
-const uint32_t COLOR_EXECUTING =
-    0xFF0000;                        // Bright red - executing loaded flow curve
-const uint32_t COLOR_OFF = 0x000000; // Off
 
 // ============================================================================
 // LED HELPER FUNCTION
@@ -342,7 +340,7 @@ void loadPersistentState() {
     return;
   }
 
-  char line[64];
+  char line[PERSISTENT_STATE_LINE_LENGTH];
   while (file.available()) {
     size_t len = file.readBytesUntil('\n', line, sizeof(line) - 1);
     line[len] = '\0';
@@ -355,7 +353,7 @@ void loadPersistentState() {
       float current =
           pressureBarToCurrent(lastPressure_bar, TANK_PRESS_CALIBRATION);
       // Validate range before applying
-      if (current >= min_mA_pres_reg && current <= max_mA) {
+      if (current >= MIN_CURR_PRESS_REG_MA && current <= MAX_CURR_MA) {
         pressureInitializedFromFlash = true;
       }
       continue;
@@ -388,11 +386,6 @@ struct __attribute__((__packed__)) DatasetRow {
   uint8_t enable;
   uint8_t trigger;
 };
-
-const uint32_t DATASET_MAGIC = 0x54434D46; // "TCMF"
-// Bump when DatasetHeader/DatasetRow layout changes.
-// Current version (2) adds the trigger column to each row.
-const uint8_t DATASET_FORMAT_VERSION = 2;
 
 bool saveDatasetToFlash() {
   if (dataIndex <= 0) {
@@ -504,8 +497,8 @@ bool restorePressureFromFlash() {
 void startRunSession() {
   // Clean up old session files so new runs can overwrite them
   for (uint32_t i = 1; i <= lastSessionCount; i++) {
-    char filename[32];
-    snprintf(filename, sizeof(filename), "experiment_log_%04lu.csv",
+    char filename[RUN_LOG_FILENAME_LENGTH];
+    snprintf(filename, sizeof(filename), RUN_LOG_FILENAME_FORMAT,
              static_cast<unsigned long>(i));
     if (fatfs.exists(filename)) {
       fatfs.remove(filename);
@@ -522,7 +515,7 @@ void saveToFlash() {
   // Advance run index and build the filename for this run
   runCounter++;
   snprintf(lastSavedFilename, sizeof(lastSavedFilename),
-           "experiment_log_%04lu.csv", static_cast<unsigned long>(runCounter));
+           RUN_LOG_FILENAME_FORMAT, static_cast<unsigned long>(runCounter));
   // Track how many files exist in the current session
   if (runCounter > lastSessionCount) {
     lastSessionCount = runCounter;
@@ -610,21 +603,21 @@ void setup() {
 
   // Initialize T Clicks (proportional valve and pressure regulator)
   valve.begin();
-  valve.set_mA(default_valve);
+  valve.set_mA(DEF_CURR_VALVE_MA);
 
   pressure.begin();
 
   // Initialize DotStar LED
   led.begin();
-  led.setBrightness(255); // Set brightness to full
-  led.show();             // Initialize all pixels to 'off'
+  led.setBrightness(LED_BRIGHTNESS);
+  led.show(); // Initialize all pixels to 'off'
 
   // Initialize serial communication at 115200 baud
-  Serial.begin(115200);
-  Serial.setTimeout(10); // Set timeout to 10ms instead of default 1000ms
+  Serial.begin(SERIAL_BAUD_RATE);
+  Serial.setTimeout(SERIAL_TIMEOUT_MS);
 
   // Set ADC resolution for photodetector
-  analogReadResolution(12); // 12-bit ADC (0-4095)
+  analogReadResolution(ADC_RESOLUTION_BITS);
 
   // Initialize pressure sensor
   tank_RClick.begin();
@@ -669,7 +662,7 @@ void setup() {
   lastSavedFilename[0] = '\0';
   if (!restorePressureFromFlash()) {
     // Fall back to default only when no persisted value was loaded
-    pressure.set_mA(default_pressure);
+    pressure.set_mA(DEF_PRESSURE);
   }
   // Restore last loaded dataset if available
   if (!loadDatasetFromFlash()) {
@@ -742,11 +735,11 @@ void stopTrigger() {
 
 void flashErrorLed() {
   // Flash orange briefly to indicate error
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < ERROR_LED_FLASH_COUNT; i++) {
     setLedColor(COLOR_ERROR);
-    delay(300);
+    delay(ERROR_LED_FLASH_INTERVAL_MS);
     setLedColor(COLOR_OFF);
-    delay(300);
+    delay(ERROR_LED_FLASH_INTERVAL_MS);
   }
   setLedColor(COLOR_IDLE);
 }
@@ -801,8 +794,8 @@ void readTemperatureHumidity(bool valveOpen) {
 
 float readPhotodetector() {
   // Read photodetector voltage with resistor divider compensation
-  int adcValue = analogRead(PIN_PDA);        // 0-4095 (12-bit)
-  float voltage = (adcValue / 4095.0) * 3.3; // Convert to voltage
+  int adcValue = analogRead(PIN_PDA);
+  float voltage = (adcValue / ADC_MAX_VALUE) * ADC_REFERENCE_VOLTAGE;
   float signalVoltage = voltage * ((PDA_R1 + PDA_R2) / PDA_R2);
 
   // DEBUG_PRINTLN(signalVoltage);
@@ -826,19 +819,18 @@ void resetDataArrays() {
 
 void clearRunCsvFiles() {
   // Remove experiment CSV files from flash
-  const char *logPrefix = "experiment_log_";
   File root = fatfs.open("/");
   if (root) {
     File entry = root.openNextFile();
     while (entry) {
       if (!entry.isDirectory()) {
-        char name[64];
+        char name[FLASH_ENTRY_NAME_LENGTH];
         if (entry.getName(name, sizeof(name))) {
           size_t nameLen = strlen(name);
           bool isCsv =
               (nameLen >= 4 && strncmp(name + nameLen - 4, ".csv", 4) == 0);
           bool matchesCurrentPrefix =
-              (strncmp(name, logPrefix, strlen(logPrefix)) == 0);
+              (strncmp(name, RUN_LOG_PREFIX, strlen(RUN_LOG_PREFIX)) == 0);
           if (isCsv && matchesCurrentPrefix) {
             entry.close();
             fatfs.remove(name);
@@ -870,7 +862,7 @@ void printStoredFilesDebug() {
   File entry = root.openNextFile();
   while (entry) {
     if (!entry.isDirectory()) {
-      char name[64];
+      char name[FLASH_ENTRY_NAME_LENGTH];
       if (entry.getName(name, sizeof(name))) {
         foundFile = true;
         DEBUG_PRINT("  ");
@@ -993,7 +985,7 @@ void loop() {
       closeSolValve();
       solValveOpen = false;
     }
-    valve.set_mA(default_valve);
+    valve.set_mA(DEF_CURR_VALVE_MA);
     sequenceIndex = 0;
     runAfterDropletDetection = runAfterDetection;
 
@@ -1032,7 +1024,7 @@ void loop() {
       closeSolValve();
       solValveOpen = false;
     }
-    valve.set_mA(default_valve);
+    valve.set_mA(DEF_CURR_VALVE_MA);
 
     // Stop any active run/detection/test modes.
     if (mode == LoopMode::DropletDetect || mode == LoopMode::LaserTest) {
@@ -1147,10 +1139,10 @@ void loop() {
     }
 
     uint32_t now_ms = millis();
-    if (now_ms - laserTestLastPrint >= 50) {
+    if (now_ms - laserTestLastPrint >= LASER_TEST_STREAM_INTERVAL_MS) {
       float signalVoltage = readPhotodetector();
       Serial.print("A");
-      Serial.println(signalVoltage, 3);
+      Serial.println(signalVoltage, SIGNAL_PRINT_DECIMAL_PLACES);
 
       if (signalVoltage <= PDA_THR) {
         Serial.println("LASER_TEST_BELOW_THRESHOLD");
@@ -1188,7 +1180,7 @@ void loop() {
     // Initialise dataset execution variables
     sequenceIndex = 0;
     solValveOpen = false;
-    valve.set_mA(default_valve);
+    valve.set_mA(DEF_CURR_VALVE_MA);
     if (performingTrigger) {
       stopTrigger();
       performingTrigger = false;
@@ -1214,7 +1206,7 @@ void loop() {
 
     // Calculate time since start execution
     uint32_t now = (micros() - runCallTime); // Time since RUN is called [µs]
-    uint32_t now_ms = now / 1000;
+    uint32_t now_ms = now / DATASET_TIME_SCALE_US_PER_MS;
 
     // Apply all dataset points that are due
     while (sequenceIndex < dataIndex && now_ms >= time_array[sequenceIndex]) {
@@ -1250,7 +1242,7 @@ void loop() {
 
     // End condition: dataset duration elapsed AND all points processed
     if (now_ms >= (uint32_t)datasetDuration && sequenceIndex >= dataIndex) {
-      valve.set_mA(default_valve);
+      valve.set_mA(DEF_CURR_VALVE_MA);
       if (solValveOpen) {
         closeSolValve();
         solValveOpen = false;
@@ -1608,7 +1600,7 @@ void loop() {
     case CommandId::SetValve: {
       // Command: V <mA>
       float current = parseFloatInString(command, 1);
-      if (!current || current < min_mA_valve || current > max_mA) {
+      if (!current || current < MIN_CURR_VALVE_MA || current > MAX_CURR_MA) {
         printError("Valve mA input out of range!");
       } else {
         valve.set_mA(current);
@@ -1632,7 +1624,8 @@ void loop() {
       float current = pressureBarToCurrent(bar, TANK_PRESS_CALIBRATION);
 
       // Step 3: validate current range before touching hardware.
-      if (!current || current < min_mA_pres_reg || current > max_mA) {
+      if (!current || current < MIN_CURR_PRESS_REG_MA ||
+          current > MAX_CURR_MA) {
         printError("Pressure input out of range!");
       } else {
         // Step 4: apply output and persist equivalent bar setpoint.
@@ -1653,7 +1646,8 @@ void loop() {
       float bar = parseFloatInString(command, 1);
       float current = pressureBarToCurrent(bar, NEB_PRESS_CALIBRATION);
 
-      if (!current || current < min_mA_pres_reg || current > max_mA) {
+      if (!current || current < MIN_CURR_PRESS_REG_MA ||
+          current > MAX_CURR_MA) {
         printError("Nebuliser pressure input out of range!");
       } else {
         neb_pressure.set_mA(current);
@@ -1774,12 +1768,12 @@ void loop() {
         return;
       }
 
-      if (normalized < 0.0 || normalized > 1.0) {
+      if (normalized < LIGHT_LEVEL_MIN || normalized > LIGHT_LEVEL_MAX) {
         printError("Light level out of range! Use 0.0 to 1.0.");
         return;
       }
 
-      uint8_t duty = (uint8_t)(normalized * 255.0 + 0.5);
+      uint8_t duty = (uint8_t)(normalized * PWM_MAX_DUTY + 0.5);
       analogWrite(PIN_LIGHT, duty);
 
       Serial.print("SET_LIGHT ");
@@ -1992,7 +1986,7 @@ void loop() {
           runCallTime = micros();
           sequenceIndex = 0;
           solValveOpen = false;
-          valve.set_mA(default_valve);
+          valve.set_mA(DEF_CURR_VALVE_MA);
           if (performingTrigger) {
             stopTrigger();
             performingTrigger = false;
