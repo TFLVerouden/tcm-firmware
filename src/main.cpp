@@ -1172,6 +1172,44 @@ void loadDataset(char *command) {
   setLedColor(COLOR_OFF);
 }
 
+// Enter flow-curve execution from either the immediate R path or the delayed
+// droplet-detection path. This resets per-run timing and actuator state so a
+// new run cannot inherit an open valve or an active trigger pulse.
+// statusMessage is the protocol reply specific to the calling path.
+void beginDatasetExecution(const char *statusMessage) {
+  controllerState.mode = LoopMode::ExecutingRun;
+  beginRunLog();
+  runCallTime = micros();
+  sequenceIndex = 0;
+  controllerState.solValveOpen = false;
+  valve.set_mA(DEF_CURR_VALVE_MA);
+
+  if (controllerState.performingTrigger) {
+    stopTrigger();
+    controllerState.performingTrigger = false;
+  }
+
+  setLedColor(COLOR_EXECUTING);
+  Serial.println(statusMessage);
+}
+
+// Complete an active trigger pulse after its configured width has elapsed.
+// This must be serviced every loop iteration to guarantee that the output pin
+// is returned LOW even when no dataset row is currently due.
+void serviceTriggerPulse() {
+  if (controllerState.performingTrigger && micros() - tick >= TRIGGER_WIDTH) {
+    stopTrigger();
+    controllerState.performingTrigger = false;
+  }
+}
+
+// Update both R-Click exponential moving averages. The readings are consumed
+// by pressure queries and event logging, so this is called every iteration.
+void pollPressureSensors() {
+  tank_RClick.poll_EMA();
+  neb_RClick.poll_EMA();
+}
+
 // ============================================================================
 // MAIN LOOP
 // ============================================================================
@@ -1199,18 +1237,18 @@ void loop() {
   // - LaserTest -> Idle: A 0 or stopActiveModes(...)
   // - Any mode -> Idle: stopActiveModes(...)
 
-    // Local aliases keep this incremental refactor readable while the helpers
-    // below are still lambdas. They will be replaced by named functions next.
-    LoopMode &mode = controllerState.mode;
-    bool &solValveOpen = controllerState.solValveOpen;
-    bool &performingTrigger = controllerState.performingTrigger;
-    bool &belowThreshold = controllerState.belowThreshold;
-    bool &detectionBaselineReady = controllerState.detectionBaselineReady;
-    uint32_t &delayedRunStartTime = controllerState.delayedRunStartTime;
-    uint32_t &detectionStartTime = controllerState.detectionStartTime;
-    bool &runAfterDropletDetection = controllerState.runAfterDropletDetection;
-    bool &setPressure = controllerState.pressureConfigured;
-    uint32_t &laserTestLastPrint = controllerState.laserTestLastPrint;
+  // Local aliases keep this incremental refactor readable while the helpers
+  // below are still lambdas. They will be replaced by named functions next.
+  LoopMode &mode = controllerState.mode;
+  bool &solValveOpen = controllerState.solValveOpen;
+  bool &performingTrigger = controllerState.performingTrigger;
+  bool &belowThreshold = controllerState.belowThreshold;
+  bool &detectionBaselineReady = controllerState.detectionBaselineReady;
+  uint32_t &delayedRunStartTime = controllerState.delayedRunStartTime;
+  uint32_t &detectionStartTime = controllerState.detectionStartTime;
+  bool &runAfterDropletDetection = controllerState.runAfterDropletDetection;
+  bool &setPressure = controllerState.pressureConfigured;
+  uint32_t &laserTestLastPrint = controllerState.laserTestLastPrint;
 
   /* ----------------------------------------------------------------------- */
   /* [HELPER] Arm droplet detection mode                                     */
@@ -1424,21 +1462,7 @@ void loop() {
       return;
     }
 
-    mode = LoopMode::ExecutingRun;
-    beginRunLog();
-    runCallTime = micros();
-
-    // Initialise dataset execution variables
-    sequenceIndex = 0;
-    solValveOpen = false;
-    valve.set_mA(DEF_CURR_VALVE_MA);
-    if (performingTrigger) {
-      stopTrigger();
-      performingTrigger = false;
-    }
-
-    setLedColor(COLOR_EXECUTING);
-    Serial.println("EXECUTING_DATASET");
+    beginDatasetExecution("EXECUTING_DATASET");
   };
 
   /* ----------------------------------------------------------------------- */
@@ -1523,17 +1547,8 @@ void loop() {
   // LOOP PHASE 1/4: Fast periodic service
   // =======================================================================
 
-  // Handle trigger pulse timing
-  // The trigger pulse is a short signal sent to peripheral devices when the
-  // valve opens. It turns off after TRIGGER_WIDTH microseconds.
-  if (performingTrigger && (micros() - tick >= TRIGGER_WIDTH)) {
-    stopTrigger();
-    performingTrigger = false;
-  }
-
-  // Pressure sensor must be called regularly to maintain exp. moving average
-  tank_RClick.poll_EMA();
-  neb_RClick.poll_EMA();
+  serviceTriggerPulse();
+  pollPressureSensors();
 
   // =======================================================================
   // LOOP PHASE 2/4: Mode processors
@@ -1973,19 +1988,8 @@ void loop() {
           mode = LoopMode::DelayBeforeRun;
           delayedRunStartTime = micros();
         } else {
-          // Immediate execution path: initialize runtime indices/outputs.
-          mode = LoopMode::ExecutingRun;
-          beginRunLog();
-          runCallTime = micros();
-          sequenceIndex = 0;
-          solValveOpen = false;
-          valve.set_mA(DEF_CURR_VALVE_MA);
-          if (performingTrigger) {
-            stopTrigger();
-            performingTrigger = false;
-          }
-          setLedColor(COLOR_EXECUTING);
-          Serial.println("STARTING_RUN");
+          // Immediate execution path: initialize runtime indices and outputs.
+          beginDatasetExecution("STARTING_RUN");
         }
       }
       break;
