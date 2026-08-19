@@ -219,6 +219,30 @@ CommandId parseCommandId(const char *command) {
   return CommandId::Other;
 }
 
+bool parseDropletRunCount(const char *command, bool runAfterDetection,
+                          int32_t &requestedCount) {
+  // No count selects continuous mode; explicit counts must be positive.
+  requestedCount = -1;
+  const size_t prefixLength = runAfterDetection ? 2 : 1;
+  if (strlen(command) <= prefixLength) {
+    return true;
+  }
+
+  requestedCount = parseIntInString(command, prefixLength);
+  if (requestedCount > 0) {
+    return true;
+  }
+
+  if (runAfterDetection) {
+    printError("D! count must be >= 1! To run indefinitely, send D! without a "
+               "number.");
+  } else {
+    printError("D count must be >= 1! To run indefinitely, send D without a "
+               "number.");
+  }
+  return false;
+}
+
 // ============================================================================
 // RUNTIME STATE AND HARDWARE
 // ============================================================================
@@ -1399,31 +1423,6 @@ void loop() {
     // Fetch and decode the latest command line
     char *command =
         sc.getCommand(); // Pointer to memory location of serial buffer contents
-
-    auto parseDropletRunCount = [&](const char *cmd, bool runAfterDetection,
-                                    int32_t &requestedCount) -> bool {
-      // Shared parser for D / D! count semantics:
-      // - No explicit number => continuous mode (-1)
-      // - Explicit number must be >= 1
-      requestedCount = -1;
-
-      // D has 1-char prefix, D! has 2-char prefix
-      const size_t prefixLen = runAfterDetection ? 2 : 1;
-      if (strlen(cmd) > prefixLen) {
-        requestedCount = parseIntInString(cmd, prefixLen);
-        if (requestedCount <= 0) {
-          if (runAfterDetection) {
-            printError("D! count must be >= 1! To run indefinitely, send D! "
-                       "without a number.");
-          } else {
-            printError("D count must be >= 1! To run indefinitely, send D "
-                       "without a number.");
-          }
-          return false;
-        }
-      }
-      return true;
-    };
 
     auto armDropletMode = [&](bool runAfterDetection, int32_t requestedCount,
                               bool resetRunSessionFiles) {
