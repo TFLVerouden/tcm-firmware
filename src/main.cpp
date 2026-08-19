@@ -1469,6 +1469,60 @@ void armDropletMode(bool runAfterDetection, int32_t requestedCount,
 // ============================================================================
 // These handlers contain command-specific serial output, keeping loop() focused
 // on parsing and dispatching rather than presentation details.
+// Set the proportional valve current after checking its 4-20 mA operating
+// range. The serial reply reports the current accepted by the hardware driver.
+void handleSetValve(const char *command) {
+  float current = parseFloatInString(command, 1);
+  if (!current || current < MIN_CURR_VALVE_MA || current > MAX_CURR_MA) {
+    printError("Valve mA input out of range!");
+    return;
+  }
+
+  valve.set_mA(current);
+  DEBUG_PRINT("Last set bitvalue of proportional valve: ");
+  DEBUG_PRINTLN(valve.get_last_set_bitval());
+  Serial.print("SET_VALVE ");
+  Serial.println(current, 2);
+}
+
+// Set and persist the tank pressure target. Receiving P marks pressure as
+// configured before validation, matching the existing run-gating behavior.
+void handleSetTankPressure(const char *command) {
+  controllerState.pressureConfigured = true;
+  float bar = parseFloatInString(command, 1);
+  float current = pressureBarToCurrent(bar, TANK_PRESS_CALIBRATION);
+  if (!current || current < MIN_CURR_PRESS_REG_MA ||
+      current > MAX_CURR_MA) {
+    printError("Pressure input out of range!");
+    return;
+  }
+
+  pressure.set_mA(current);
+  lastPressure_bar = bar;
+  pressureInitializedFromFlash = true;
+  savePersistentState();
+  DEBUG_PRINT("Last set bitvalue of pressure regulator: ");
+  DEBUG_PRINTLN(pressure.get_last_set_bitval());
+  Serial.print("SET_PRESSURE ");
+  Serial.println(lastPressure_bar, 2);
+}
+
+// Set the nebuliser pressure target after converting bar to regulator current.
+// Unlike tank pressure, the nebuliser target is not persisted between boots.
+void handleSetNebPressure(const char *command) {
+  float bar = parseFloatInString(command, 1);
+  float current = pressureBarToCurrent(bar, NEB_PRESS_CALIBRATION);
+  if (!current || current < MIN_CURR_PRESS_REG_MA ||
+      current > MAX_CURR_MA) {
+    printError("Nebuliser pressure input out of range!");
+    return;
+  }
+
+  neb_pressure.set_mA(current);
+  Serial.print("SET_NEB_PRESSURE ");
+  Serial.println(bar, 2);
+}
+
 void printSystemStatus() {
   DEBUG_PRINTLN("\n=== System Status ===");
   DEBUG_PRINT("Solenoid valve: ");
@@ -1691,65 +1745,17 @@ void loop() {
       Serial.println("LOGS_CLEARED");
       break;
 
-    case CommandId::SetValve: {
-      // Command: V <mA>
-      float current = parseFloatInString(command, 1);
-      if (!current || current < MIN_CURR_VALVE_MA || current > MAX_CURR_MA) {
-        printError("Valve mA input out of range!");
-      } else {
-        valve.set_mA(current);
-        DEBUG_PRINT("Last set bitvalue of proportional valve: ");
-        DEBUG_PRINTLN(valve.get_last_set_bitval());
-        Serial.print("SET_VALVE ");
-        Serial.println(current, 2);
-      }
+    case CommandId::SetValve:
+      handleSetValve(command);
       break;
-    }
 
-    case CommandId::SetTankPressure: {
-      // Command: P <bar>
-      // Step 1: mark pressure as user-configured so runs can proceed.
-      if (!setPressure) {
-        setPressure = true;
-      }
-
-      // Step 2: parse user target and convert to regulator current.
-      float bar = parseFloatInString(command, 1);
-      float current = pressureBarToCurrent(bar, TANK_PRESS_CALIBRATION);
-
-      // Step 3: validate current range before touching hardware.
-      if (!current || current < MIN_CURR_PRESS_REG_MA ||
-          current > MAX_CURR_MA) {
-        printError("Pressure input out of range!");
-      } else {
-        // Step 4: apply output and persist equivalent bar setpoint.
-        pressure.set_mA(current);
-        lastPressure_bar = bar;
-        pressureInitializedFromFlash = true;
-        savePersistentState();
-        DEBUG_PRINT("Last set bitvalue of pressure regulator: ");
-        DEBUG_PRINTLN(pressure.get_last_set_bitval());
-        Serial.print("SET_PRESSURE ");
-        Serial.println(lastPressure_bar, 2);
-      }
+    case CommandId::SetTankPressure:
+      handleSetTankPressure(command);
       break;
-    }
 
-    case CommandId::SetNebPressure: {
-      // Command: M <bar>
-      float bar = parseFloatInString(command, 1);
-      float current = pressureBarToCurrent(bar, NEB_PRESS_CALIBRATION);
-
-      if (!current || current < MIN_CURR_PRESS_REG_MA ||
-          current > MAX_CURR_MA) {
-        printError("Nebuliser pressure input out of range!");
-      } else {
-        neb_pressure.set_mA(current);
-        Serial.print("SET_NEB_PRESSURE ");
-        Serial.println(bar, 2);
-      }
+    case CommandId::SetNebPressure:
+      handleSetNebPressure(command);
       break;
-    }
 
     case CommandId::OpenSolenoid:
       if (!solValveOpen) {
