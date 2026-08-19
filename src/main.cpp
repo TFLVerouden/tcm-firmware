@@ -382,7 +382,7 @@ T_Click neb_pressure(PIN_NEB_CS_TCLICK, T_CLICK_CALIBRATION);
 Adafruit_DotStar led(1, PIN_DOTSTAR_DATA, PIN_DOTSTAR_CLK, DOTSTAR_BGR);
 
 // ============================================================================
-// LED HELPER FUNCTION
+// STATUS LED, LOGGING, AND CONVERSION HELPERS
 // ============================================================================
 void setLedColor(uint32_t color) {
   // Set the DotStar LED to a specific color
@@ -435,7 +435,7 @@ float pressureCurrentToBar(float current_mA,
 }
 
 // ============================================================================
-// FUNCTION TO STORE DATA TO FLASH INSTEAD OF RAM
+// PERSISTENT SETTINGS
 // ============================================================================
 void savePersistentState() {
   // Store selected settings so they survive power cycles
@@ -506,7 +506,7 @@ void loadPersistentState() {
 }
 
 // ============================================================================
-// FLOW CURVE DATASET PERSISTENCE (FLASH)
+// FLOW-CURVE DATASET PERSISTENCE
 // ============================================================================
 struct __attribute__((__packed__)) DatasetHeader {
   uint32_t magic;
@@ -629,6 +629,9 @@ bool restorePressureFromFlash() {
   return false;
 }
 
+// ============================================================================
+// RUN LOG FILE MANAGEMENT
+// ============================================================================
 void startRunSession() {
   // Clean up old session files so new runs can overwrite them
   for (uint32_t i = 1; i <= lastSessionCount; i++) {
@@ -808,7 +811,7 @@ void setup() {
 }
 
 // ============================================================================
-// VALVE AND SENSOR FUNCTIONS
+// HARDWARE I/O AND SENSOR READOUT
 // ============================================================================
 
 void openSolValve() {
@@ -940,6 +943,9 @@ float readPhotodetector() {
   return signalVoltage;
 }
 
+// ============================================================================
+// DATASET AND FLASH UTILITY FUNCTIONS
+// ============================================================================
 void resetDataArrays() {
   // Clear all flow curve dataset buffers and indices
   memset(time_array, 0, sizeof(time_array));
@@ -1047,6 +1053,9 @@ void clearPersistentStateAndDataset() {
   resetDataArrays();
 }
 
+// ============================================================================
+// SERIAL DATASET UPLOAD
+// ============================================================================
 void loadDataset(char *command) {
   // Command: L <N> <duration_ms> <ms>,<mA>,<enable>,<trigger>,...
 
@@ -1172,6 +1181,9 @@ void loadDataset(char *command) {
   setLedColor(COLOR_OFF);
 }
 
+// ============================================================================
+// CONTROLLER SERVICES AND STATE MACHINES
+// ============================================================================
 // Enter flow-curve execution from either the immediate R path or the delayed
 // droplet-detection path. This resets per-run timing and actuator state so a
 // new run cannot inherit an open valve or an active trigger pulse.
@@ -1433,8 +1445,9 @@ bool processDatasetExecution() {
 }
 
 // Start a finite or continuous droplet mode after returning all outputs to a
-// known state. Detect-and-run modes create a fresh log-file session; detect-only
-// modes retain the existing session because they do not create run logs.
+// known state. Detect-and-run modes create a fresh log-file session;
+// detect-only modes retain the existing session because they do not create run
+// logs.
 void armDropletMode(bool runAfterDetection, int32_t requestedCount,
                     bool resetRunSessionFiles) {
   stopActiveModes(false);
@@ -1459,11 +1472,10 @@ void loop() {
   /*
    * LOOP ROADMAP
    * -------------------------------------------------------------------------
-   * 1) Persistent state and local helpers (lambdas)
-   * 2) Fast periodic service (trigger timeout, sensor EMA)
-   * 3) Mode processors (laser test, droplet detection, delayed run start)
-   * 4) Active flow curve execution
-   * 5) Serial command dispatch
+   * 1) Fast periodic service (trigger timeout, sensor EMA)
+   * 2) Mode processors (laser test, droplet detection, delayed run start)
+   * 3) Active flow curve execution
+   * 4) Serial command dispatch
    */
 
   // LoopMode transition guide:
@@ -1487,16 +1499,14 @@ void loop() {
   bool &setPressure = controllerState.pressureConfigured;
   uint32_t &laserTestLastPrint = controllerState.laserTestLastPrint;
 
-  // =======================================================================
+  //
   // LOOP PHASE 1/4: Fast periodic service
-  // =======================================================================
 
   serviceTriggerPulse();
   pollPressureSensors();
 
-  // =======================================================================
+  //
   // LOOP PHASE 2/4: Mode processors
-  // =======================================================================
 
   // Laser test mode: keep laser on and stream photodiode voltage
   processLaserTest();
@@ -1509,18 +1519,17 @@ void loop() {
   // Delayed flow-curve start after droplet detection / R command
   processDelayedRunStart();
 
-  // =======================================================================
+  //
   // LOOP PHASE 3/4: Active flow-curve execution
-  // =======================================================================
 
   // Drives the proportional valve, solenoid, and trigger based on the dataset
   if (processDatasetExecution()) {
     return;
   }
 
-  // =======================================================================
+  //
   // LOOP PHASE 4/4: Serial command dispatch
-  // =======================================================================
+
   if (sc.available()) {
     // Fetch and decode the latest command line
     char *command =
