@@ -32,7 +32,7 @@
 // ============================================================================
 // Versioned serial contract used by host software to enforce compatibility.
 // Keep this as a single integer and bump only on breaking serial changes.
-const uint8_t TCM_PROTOCOL_VERSION = 5;
+const uint8_t TCM_PROTOCOL_VERSION = 6;
 
 // ============================================================================
 // FORWARD DECLARATIONS
@@ -196,7 +196,7 @@ R_Click tank_RClick(PIN_TANK_CS_RCLICK,
                     EMA_LP_FREQ);
 
 // TODO: Replace with calibration values for the nebuliser R-Click.
-R_Click neb_Rclick(PIN_NEB_CS_RCLICK,
+R_Click neb_RClick(PIN_NEB_CS_RCLICK,
                    RT_Click_Calibration{4.04, 10.98, 806, 2191}, EMA_INTERVAL,
                    EMA_LP_FREQ);
 
@@ -628,7 +628,7 @@ void setup() {
 
   // Initialize pressure sensor
   tank_RClick.begin();
-  neb_Rclick.begin();
+  neb_RClick.begin();
 
   // Initialize the SHT4x temperature & humidity sensor
   if (!sht4.begin()) {
@@ -767,17 +767,14 @@ template <typename T> void printError(const char *message, T value) {
   flashErrorLed();
 }
 
-void readPressure(bool valveOpen) {
+void readPressure() {
   // Read current pressure from R-Click sensor and send over serial
   // Conversion formula: Pressure = 0.6249 * I[mA] - 2.4882
   // where I is the 4-20mA current output
-  setLedColor(COLOR_READING); // Show color during reading
   Serial.print("P");
   Serial.println(
       pressureCurrentToBar(tank_RClick.get_EMA_mA(), TANK_PRESS_CALIBRATION));
 
-  // Restore LED color based on valve state
-  setLedColor(valveOpen ? COLOR_VALVE_OPEN : COLOR_IDLE);
   DEBUG_PRINT("R Click bitvalue: ");
   DEBUG_PRINTLN(tank_RClick.get_EMA_bitval());
   DEBUG_PRINT("R Click mA: ");
@@ -1293,7 +1290,7 @@ void loop() {
 
   // Pressure sensor must be called regularly to maintain exp. moving average
   tank_RClick.poll_EMA();
-  neb_Rclick.poll_EMA();
+  neb_RClick.poll_EMA();
 
   // =======================================================================
   // LOOP PHASE 2/4: Mode processors
@@ -1793,15 +1790,18 @@ void loop() {
     }
 
     case CommandId::ReadTankPressure:
-      readPressure(solValveOpen);
+      readPressure();
       break;
 
     case CommandId::ReadNebPressure:
-      setLedColor(COLOR_READING);
       Serial.print("M");
       Serial.println(
-          pressureCurrentToBar(neb_Rclick.get_EMA_mA(), NEB_PRESS_CALIBRATION));
-      setLedColor(solValveOpen ? COLOR_VALVE_OPEN : COLOR_IDLE);
+          pressureCurrentToBar(neb_RClick.get_EMA_mA(), NEB_PRESS_CALIBRATION));
+
+      DEBUG_PRINT("R Click bitvalue: ");
+      DEBUG_PRINTLN(neb_RClick.get_EMA_bitval());
+      DEBUG_PRINT("R Click mA: ");
+      DEBUG_PRINTLN(neb_RClick.get_EMA_mA());
       break;
 
     case CommandId::ReadTempHumidity:
