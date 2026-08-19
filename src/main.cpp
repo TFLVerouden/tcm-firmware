@@ -1523,6 +1523,40 @@ void handleSetNebPressure(const char *command) {
   Serial.println(bar, 2);
 }
 
+// Set and persist the delay between a run request or droplet event and dataset
+// execution. The value is interpreted as an unsigned number of microseconds.
+void handleSetWait(const char *command) {
+  pre_trigger_delay_us = parseIntInString(command, 1);
+  waitInitializedFromFlash = true;
+  savePersistentState();
+  DEBUG_PRINT("Pre-trigger wait: ");
+  DEBUG_PRINT(pre_trigger_delay_us);
+  DEBUG_PRINTLN(" µs");
+  Serial.print("SET_WAIT ");
+  Serial.println(pre_trigger_delay_us);
+}
+
+// Report the configured pre-trigger delay using the compact serial protocol.
+void handleWaitQuery() {
+  Serial.print("W");
+  Serial.println(pre_trigger_delay_us);
+}
+
+// Remove experiment log files and reset their in-memory session bookkeeping.
+void handleClearLogs() {
+  clearRunCsvFiles();
+  clearSessionTracking();
+  Serial.println("LOGS_CLEARED");
+}
+
+// Clear all user-persisted data: logs, pressure/wait settings, and dataset.
+void handleClearMemory() {
+  clearRunCsvFiles();
+  clearPersistentStateAndDataset();
+  clearSessionTracking();
+  Serial.println("MEMORY_CLEARED");
+}
+
 void printSystemStatus() {
   DEBUG_PRINTLN("\n=== System Status ===");
   DEBUG_PRINT("Solenoid valve: ");
@@ -1717,32 +1751,19 @@ void loop() {
       break;
 
     case CommandId::WaitSet:
-      pre_trigger_delay_us = parseIntInString(command, 1);
-      waitInitializedFromFlash = true;
-      savePersistentState();
-      DEBUG_PRINT("Pre-trigger wait: ");
-      DEBUG_PRINT(pre_trigger_delay_us);
-      DEBUG_PRINTLN(" µs");
-      Serial.print("SET_WAIT ");
-      Serial.println(pre_trigger_delay_us);
+      handleSetWait(command);
       break;
 
     case CommandId::WaitQuery:
-      Serial.print("W");
-      Serial.println(pre_trigger_delay_us);
+      handleWaitQuery();
       break;
 
     case CommandId::ClearMemory:
-      clearRunCsvFiles();
-      clearPersistentStateAndDataset();
-      clearSessionTracking();
-      Serial.println("MEMORY_CLEARED");
+      handleClearMemory();
       break;
 
     case CommandId::ClearLogs:
-      clearRunCsvFiles();
-      clearSessionTracking();
-      Serial.println("LOGS_CLEARED");
+      handleClearLogs();
       break;
 
     case CommandId::SetValve:
