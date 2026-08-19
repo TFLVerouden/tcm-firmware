@@ -1241,6 +1241,37 @@ bool startDropletDetection(bool runAfterDetection) {
   return true;
 }
 
+// Return the controller to a safe idle state before mode changes or after Q.
+// It stops active outputs, restores the proportional valve default, clears
+// mode-specific flags, and optionally restores the idle LED indication.
+void stopActiveModes(bool setIdleLed = true) {
+  if (controllerState.performingTrigger) {
+    stopTrigger();
+    controllerState.performingTrigger = false;
+  }
+
+  if (controllerState.solValveOpen) {
+    closeSolValve();
+    controllerState.solValveOpen = false;
+  }
+  valve.set_mA(DEF_CURR_VALVE_MA);
+
+  if (controllerState.mode == LoopMode::DropletDetect ||
+      controllerState.mode == LoopMode::LaserTest) {
+    stopLaser();
+  }
+  controllerState.mode = LoopMode::Idle;
+  sequenceIndex = 0;
+  dropletRunsRemaining = 0;
+  controllerState.runAfterDropletDetection = false;
+  controllerState.belowThreshold = false;
+  controllerState.detectionBaselineReady = false;
+
+  if (setIdleLed) {
+    setLedColor(COLOR_IDLE);
+  }
+}
+
 // ============================================================================
 // MAIN LOOP
 // ============================================================================
@@ -1280,50 +1311,6 @@ void loop() {
   bool &runAfterDropletDetection = controllerState.runAfterDropletDetection;
   bool &setPressure = controllerState.pressureConfigured;
   uint32_t &laserTestLastPrint = controllerState.laserTestLastPrint;
-
-  /* ----------------------------------------------------------------------- */
-  /* [HELPER] Stop/clear all active operation modes                          */
-  /* ----------------------------------------------------------------------- */
-  auto stopActiveModes = [&](bool setIdleLed = true) {
-    // Responsibility:
-    // - Bring outputs to safe defaults (trigger low, valve default)
-    // - Turn off laser when relevant
-    // - Reset mode/counters/edge flags that coordinate loop state machines
-    // - Optionally restore idle LED indication
-
-    // Centralized teardown for all active operation modes.
-    // Used before mode switches and by emergency/stop commands.
-
-    // Ensure trigger pulse is not left active.
-    if (performingTrigger) {
-      stopTrigger();
-      performingTrigger = false;
-    }
-
-    // Ensure solenoid and proportional valve return to safe defaults.
-    if (solValveOpen) {
-      closeSolValve();
-      solValveOpen = false;
-    }
-    valve.set_mA(DEF_CURR_VALVE_MA);
-
-    // Stop any active run/detection/test modes.
-    if (mode == LoopMode::DropletDetect || mode == LoopMode::LaserTest) {
-      stopLaser();
-    }
-    mode = LoopMode::Idle;
-
-    // Reset mode-specific control flags/counters.
-    sequenceIndex = 0;
-    dropletRunsRemaining = 0;
-    runAfterDropletDetection = false;
-    belowThreshold = false;
-    detectionBaselineReady = false;
-
-    if (setIdleLed) {
-      setLedColor(COLOR_IDLE);
-    }
-  };
 
   /* ----------------------------------------------------------------------- */
   /* [HELPER] Process droplet detection state machine                         */
