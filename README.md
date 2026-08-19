@@ -1,6 +1,6 @@
-# Twente Cough Machine Control (MCU)
+# Twente Cough Machine microcontroller firmware
 
-Firmware for the cough machine controller running on the [Adafruit ItsyBitsy M4 Express](https://learn.adafruit.com/introducing-adafruit-itsybitsy-m4). It drives the solenoid valve and proportional valve, handles droplet detection, logs data to QSPI flash, and exposes a serial command interface for experiments.
+Firmware for the Twente Cough Machine running on an [Adafruit ItsyBitsy M4 Express](https://learn.adafruit.com/introducing-adafruit-itsybitsy-m4). It drives the solenoid valve and proportional valve, handles droplet detection, logs data to QSPI flash, and exposes a serial command interface for experiments.
 
 ## Hardware
 
@@ -9,9 +9,9 @@ See also the [Twente Cough Machine hardware documentation](https://github.com/TF
 | Function | Pin |
 | --- | --- |
 | Solenoid valve MOSFET gate | 7 |
-| Proportional-valve T-Click chip select | 11 |
-| Pressure-regulator T-Click chip select | 10 |
-| Pressure-sensor R-Click chip select | 2 |
+| Proportional valve T-Click chip select | 11 |
+| Pressure regulator T-Click chip select | 10 |
+| Pressure sensor R-Click chip select | 2 |
 | Trigger output | 9 |
 | Laser MOSFET gate | 12 |
 | Light PWM output | 5 |
@@ -21,15 +21,17 @@ See also the [Twente Cough Machine hardware documentation](https://github.com/TF
 
 All controlled outputs start LOW at boot. The pressure regulator restores its last valid saved setting from QSPI flash; when no valid setting is available, it uses the firmware default of 4.0 mA. Pressure conversion and sensor calibration constants are defined in [src/main.cpp](src/main.cpp).
 
-## Build & Upload
+## Build & upload
 
 This is a PlatformIO project. Open the project in VS Code with PlatformIO installed, then build and upload using the PlatformIO UI or tasks.
 
-## Serial Command Reference
+## Serial command reference
 
-Commands are ASCII lines terminated by newline (\n). Units are noted per command.
+Connect to the board's USB serial port at **115200 baud**, 8 data bits, no parity, and 1 stop bit. Commands are ASCII lines terminated by a newline (`\n`); the PlatformIO monitor configuration sends each entered line immediately and echoes it locally.
 
-### Connection & Debugging
+The firmware responds on the same serial connection. Enable debug output with `B 1` for additional diagnostic messages, and disable it again with `B 0`.
+
+### Connection & debugging
 
 | Command | Description | Reply |
 | --- | --- | --- |
