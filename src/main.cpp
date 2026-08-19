@@ -1465,6 +1465,103 @@ void armDropletMode(bool runAfterDetection, int32_t requestedCount,
 }
 
 // ============================================================================
+// SERIAL COMMAND HANDLERS
+// ============================================================================
+// These handlers contain command-specific serial output, keeping loop() focused
+// on parsing and dispatching rather than presentation details.
+void printSystemStatus() {
+  DEBUG_PRINTLN("\n=== System Status ===");
+  DEBUG_PRINT("Solenoid valve: ");
+  DEBUG_PRINTLN(controllerState.solValveOpen ? "OPEN" : "CLOSED");
+  DEBUG_PRINT("Dataset in memory: ");
+  DEBUG_PRINTLN((dataIndex == 0) ? "FALSE" : "TRUE");
+  DEBUG_PRINT("Executing dataset: ");
+  DEBUG_PRINTLN(controllerState.mode == LoopMode::ExecutingRun ? "TRUE"
+                                                               : "FALSE");
+  DEBUG_PRINT("Trigger: ");
+  DEBUG_PRINTLN(controllerState.performingTrigger ? "ACTIVE" : "IDLE");
+  DEBUG_PRINT("Droplet detection: ");
+  DEBUG_PRINTLN(controllerState.mode == LoopMode::DropletDetect ? "ACTIVE"
+                                                                : "IDLE");
+  if (controllerState.mode == LoopMode::DropletDetect) {
+    DEBUG_PRINT("Photodetector: ");
+    DEBUG_PRINT(readPhotodetector());
+    DEBUG_PRINTLN(" V");
+  }
+  DEBUG_PRINT("Wait before RUN: ");
+  DEBUG_PRINT(pre_trigger_delay_us);
+  DEBUG_PRINTLN(" µs");
+  DEBUG_PRINT("Photodiode detection delay: ");
+  DEBUG_PRINT(pda_delay);
+  DEBUG_PRINTLN(" µs");
+  DEBUG_PRINT("Droplet runs remaining: ");
+  DEBUG_PRINTLN(dropletRunsRemaining);
+  DEBUG_PRINT("Pressure (raw): ");
+  DEBUG_PRINT(tank_RClick.get_EMA_mA());
+  DEBUG_PRINT("Pressure (bar): ");
+  DEBUG_PRINTLN(
+      pressureCurrentToBar(tank_RClick.get_EMA_mA(), TANK_PRESS_CALIBRATION));
+  DEBUG_PRINTLN(" mA");
+  DEBUG_PRINT("Uptime: ");
+  DEBUG_PRINT(millis() / 1000);
+  DEBUG_PRINTLN(" s");
+  printStoredFilesDebug();
+}
+
+// Print the on-device help menu. Help is intentionally restricted to debug
+// mode so normal protocol traffic remains machine-readable.
+void printCommandHelp() {
+  if (!debug_enabled) {
+    printError("Help menu is only available when debug output is enabled! "
+               "Enable with B 1 command.");
+    return;
+  }
+
+  DEBUG_PRINTLN("\n=== Available Commands ===");
+  DEBUG_PRINTLN("[Connection & Debugging]");
+  DEBUG_PRINTLN("id?     - Show device ID for auto serial connection");
+  DEBUG_PRINTLN("ver?    - Show protocol version");
+  DEBUG_PRINTLN("B <0|1> - Toggle debug output");
+  DEBUG_PRINTLN("S?      - Show system status (debug only)");
+  DEBUG_PRINTLN("?       - Show the on-device help menu");
+  DEBUG_PRINTLN("[Control Hardware]");
+  DEBUG_PRINTLN("V <mA>  - Set proportional valve current in mA");
+  DEBUG_PRINTLN("P <bar> - Set tank pressure in bar");
+  DEBUG_PRINTLN("M <bar> - Set nebuliser pressure in bar");
+  DEBUG_PRINTLN("O       - Open solenoid valve");
+  DEBUG_PRINTLN("C       - Close solenoid valve");
+  DEBUG_PRINTLN("I <0..1> - Set light level (pin 5, normalized PWM)");
+  DEBUG_PRINTLN("G       - Send one trigger pulse now");
+  DEBUG_PRINTLN("A <0|1> - Laser test mode off/on (streams photodiode "
+                "readings when on)");
+  DEBUG_PRINTLN("F <val> - Set fan speed (pin 3, not yet implemented)");
+  DEBUG_PRINTLN("N <0|1> - Nebuliser off/on (pin A3)");
+  DEBUG_PRINTLN("Q       - Quit active modes and return to idle");
+  DEBUG_PRINTLN("[Read Out Sensors]");
+  DEBUG_PRINTLN("P?      - Read current pressure (bar)");
+  DEBUG_PRINTLN("M?      - Read current nebuliser pressure (bar)");
+  DEBUG_PRINTLN("T?      - Read temperature & humidity");
+  DEBUG_PRINTLN("[Configuration]");
+  DEBUG_PRINTLN("W <us>  - Set wait before run in microseconds");
+  DEBUG_PRINTLN("W?      - Read current wait before run in microseconds");
+  DEBUG_PRINTLN("X       - Delete logged CSV files (experiment_log_*.csv)");
+  DEBUG_PRINTLN("X!      - X + clear persisted state and dataset");
+  DEBUG_PRINTLN("[Flow curve dataset Handling]");
+  DEBUG_PRINTLN("L <N> <duration_ms> <csv> - Load flow curve. CSV format: "
+                "<ms0>,<mA0>,<e0>,<t0>,<ms1>,<mA1>,<e1>,<t1>,...,<msN>,<"
+                "mAN>,<eN>,<tN>");
+  DEBUG_PRINTLN("         where e=solenoid enable (0/1), t=trigger event "
+                "(0/1), and trigger pulse width is fixed in firmware");
+  DEBUG_PRINTLN("L?      - Show loaded flow curve status");
+  DEBUG_PRINTLN("[Cough]");
+  DEBUG_PRINTLN("R       - Run the loaded flow curve dataset");
+  DEBUG_PRINTLN("D       - Droplet-detect only (cont.)");
+  DEBUG_PRINTLN("D <n>   - Droplet-detect only n times then stop");
+  DEBUG_PRINTLN("D!      - Droplet-detect then run flow curve (cont.)");
+  DEBUG_PRINTLN("D! <n>  - Droplet-detect then run flow curve n times");
+}
+
+// ============================================================================
 // MAIN LOOP
 // ============================================================================
 
@@ -1558,92 +1655,11 @@ void loop() {
     }
 
     case CommandId::StatusQuery:
-      DEBUG_PRINTLN("\n=== System Status ===");
-      DEBUG_PRINT("Solenoid valve: ");
-      DEBUG_PRINTLN(solValveOpen ? "OPEN" : "CLOSED");
-      DEBUG_PRINT("Dataset in memory: ");
-      DEBUG_PRINTLN((dataIndex == 0) ? "FALSE" : "TRUE");
-      DEBUG_PRINT("Executing dataset: ");
-      DEBUG_PRINTLN(mode == LoopMode::ExecutingRun ? "TRUE" : "FALSE");
-      DEBUG_PRINT("Trigger: ");
-      DEBUG_PRINTLN(performingTrigger ? "ACTIVE" : "IDLE");
-      DEBUG_PRINT("Droplet detection: ");
-      DEBUG_PRINTLN(mode == LoopMode::DropletDetect ? "ACTIVE" : "IDLE");
-      if (mode == LoopMode::DropletDetect) {
-        DEBUG_PRINT("Photodetector: ");
-        DEBUG_PRINT(readPhotodetector());
-        DEBUG_PRINTLN(" V");
-      }
-      DEBUG_PRINT("Wait before RUN: ");
-      DEBUG_PRINT(pre_trigger_delay_us);
-      DEBUG_PRINTLN(" µs");
-      DEBUG_PRINT("Photodiode detection delay: ");
-      DEBUG_PRINT(pda_delay);
-      DEBUG_PRINTLN(" µs");
-      DEBUG_PRINT("Droplet runs remaining: ");
-      DEBUG_PRINTLN(dropletRunsRemaining);
-      DEBUG_PRINT("Pressure (raw): ");
-      DEBUG_PRINT(tank_RClick.get_EMA_mA());
-      DEBUG_PRINT("Pressure (bar): ");
-      DEBUG_PRINTLN(pressureCurrentToBar(tank_RClick.get_EMA_mA(),
-                                         TANK_PRESS_CALIBRATION));
-      DEBUG_PRINTLN(" mA");
-      DEBUG_PRINT("Uptime: ");
-      DEBUG_PRINT(millis() / 1000);
-      DEBUG_PRINTLN(" s");
-      printStoredFilesDebug();
+      printSystemStatus();
       break;
 
     case CommandId::Help:
-      // If debug is off, print an error
-      if (!debug_enabled) {
-        printError("Help menu is only available when debug output is enabled! "
-                   "Enable with B 1 command.");
-        return;
-      }
-
-      DEBUG_PRINTLN("\n=== Available Commands ===");
-      DEBUG_PRINTLN("[Connection & Debugging]");
-      DEBUG_PRINTLN("id?     - Show device ID for auto serial connection");
-      DEBUG_PRINTLN("ver?    - Show protocol version");
-      DEBUG_PRINTLN("B <0|1> - Toggle debug output");
-      DEBUG_PRINTLN("S?      - Show system status (debug only)");
-      DEBUG_PRINTLN("?       - Show the on-device help menu");
-      DEBUG_PRINTLN("[Control Hardware]");
-      DEBUG_PRINTLN("V <mA>  - Set proportional valve current in mA");
-      DEBUG_PRINTLN("P <bar> - Set tank pressure in bar");
-      DEBUG_PRINTLN("M <bar> - Set nebuliser pressure in bar");
-      DEBUG_PRINTLN("O       - Open solenoid valve");
-      DEBUG_PRINTLN("C       - Close solenoid valve");
-      DEBUG_PRINTLN("I <0..1> - Set light level (pin 5, normalized PWM)");
-      DEBUG_PRINTLN("G       - Send one trigger pulse now");
-      DEBUG_PRINTLN("A <0|1> - Laser test mode off/on (streams photodiode "
-                    "readings when on)");
-      DEBUG_PRINTLN("F <val> - Set fan speed (pin 3, not yet implemented)");
-      DEBUG_PRINTLN("N <0|1> - Nebuliser off/on (pin A3)");
-      DEBUG_PRINTLN("Q       - Quit active modes and return to idle");
-      DEBUG_PRINTLN("[Read Out Sensors]");
-      DEBUG_PRINTLN("P?      - Read current pressure (bar)");
-      DEBUG_PRINTLN("M?      - Read current nebuliser pressure (bar)");
-      DEBUG_PRINTLN("T?      - Read temperature & humidity");
-      DEBUG_PRINTLN("[Configuration]");
-      DEBUG_PRINTLN("W <us>  - Set wait before run in microseconds");
-      DEBUG_PRINTLN("W?      - Read current wait before run in microseconds");
-      DEBUG_PRINTLN("X       - Delete logged CSV files (experiment_log_*.csv)");
-      DEBUG_PRINTLN("X!      - X + clear persisted state and dataset");
-      DEBUG_PRINTLN("[Flow curve dataset Handling]");
-      DEBUG_PRINTLN("L <N> <duration_ms> <csv> - Load flow curve. CSV format: "
-                    "<ms0>,<mA0>,<e0>,<t0>,<ms1>,<mA1>,<e1>,<t1>,...,<msN>,<"
-                    "mAN>,<eN>,<tN>");
-      DEBUG_PRINTLN("         where e=solenoid enable (0/1), t=trigger event "
-                    "(0/1), and trigger pulse width is fixed in firmware");
-      DEBUG_PRINTLN("L?      - Show loaded flow curve status");
-      DEBUG_PRINTLN("[Cough]");
-      DEBUG_PRINTLN("R       - Run the loaded flow curve dataset");
-      DEBUG_PRINTLN("D       - Droplet-detect only (cont.)");
-      DEBUG_PRINTLN("D <n>   - Droplet-detect only n times then stop");
-      DEBUG_PRINTLN("D!      - Droplet-detect then run flow curve (cont.)");
-      DEBUG_PRINTLN("D! <n>  - Droplet-detect then run flow curve n times");
+      printCommandHelp();
       break;
 
     case CommandId::WaitSet:
