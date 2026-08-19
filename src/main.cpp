@@ -1018,6 +1018,120 @@ void clearPersistentStateAndDataset() {
   resetDataArrays();
 }
 
+void loadDataset(char *command) {
+  // Command: L <N> <duration_ms> <ms>,<mA>,<enable>,<trigger>,...
+
+  // 1. Indicate that the complete command line is being processed.
+  setLedColor(COLOR_RECEIVING);
+
+  // 2. Reject a command that has no header or CSV data.
+  if (strlen(command) < 3) {
+    printError("\"L\" command is not followed by dataset!");
+    return;
+  }
+
+  // 3. Split the header into the number of rows and total duration in ms.
+  char *token = strtok(command + 2, " ");
+  incomingCount = atoi(token);
+  token = strtok(NULL, " ");
+  datasetDuration = atoi(token);
+
+  // The fixed-size arrays must be able to hold every requested row.
+  if (incomingCount > MAX_DATA_LENGTH || incomingCount <= 0) {
+    printError("Data length is not allowed: 0 < N <", MAX_DATA_LENGTH);
+    resetDataArrays();
+    return;
+  }
+
+  // 4. Parse each CSV row into the four arrays used during execution.
+  dataIndex = 0;
+  for (int index = 0; index < incomingCount; index++) {
+    // Field 1: timestamp relative to the start of the dataset [ms].
+    token = strtok(NULL, ",");
+    if (token == NULL) {
+      printError("Token was NULL, breaking CSV parsing. Upload new dataset! "
+                 "Error at data index ",
+                 dataIndex);
+      resetDataArrays();
+      break;
+    }
+    time_array[index] = atoi(token);
+
+    // Field 2: proportional-valve current [mA].
+    token = strtok(NULL, ",");
+    if (token == NULL) {
+      printError("Token was NULL, breaking CSV parsing. Upload new dataset! "
+                 "Error at data index",
+                 dataIndex);
+      resetDataArrays();
+      break;
+    }
+    value_array[index] = parseFloatInString(token, 0);
+
+    // Field 3: solenoid state, restricted to the binary values 0 and 1.
+    token = strtok(NULL, ",");
+    if (token == NULL) {
+      printError("Token was NULL, breaking CSV parsing. Upload new dataset! "
+                 "Error at data index",
+                 dataIndex);
+      resetDataArrays();
+      break;
+    }
+    int enable = strcmp(token, "0") == 0 ? 0 : strcmp(token, "1") == 0 ? 1 : -1;
+    if (enable == -1) {
+      printError("Enable flag must be 0 or 1. Upload new dataset! Error at "
+                 "data index",
+                 dataIndex);
+      resetDataArrays();
+      break;
+    }
+    sol_enable_array[index] = static_cast<uint8_t>(enable);
+
+    // Field 4: trigger event, also restricted to the binary values 0 and 1.
+    token = strtok(NULL, ",");
+    if (token == NULL) {
+      printError("Token was NULL, breaking CSV parsing. Upload new dataset! "
+                 "Error at data index",
+                 dataIndex);
+      resetDataArrays();
+      break;
+    }
+    int trigger = strcmp(token, "0") == 0   ? 0
+                  : strcmp(token, "1") == 0 ? 1
+                                            : -1;
+    if (trigger == -1) {
+      printError("Trigger flag must be 0 or 1. Upload new dataset! Error at "
+                 "data index",
+                 dataIndex);
+      resetDataArrays();
+      break;
+    }
+    trig_enable_array[index] = static_cast<uint8_t>(trigger);
+
+    // Emit the accepted row only when debug output is enabled.
+    DEBUG_PRINT("Timestamp: ");
+    DEBUG_PRINT(time_array[index]);
+    DEBUG_PRINT(", mA: ");
+    DEBUG_PRINT(value_array[index]);
+    DEBUG_PRINT(", enable: ");
+    DEBUG_PRINT(sol_enable_array[index]);
+    DEBUG_PRINT(", trigger: ");
+    DEBUG_PRINTLN(trig_enable_array[index]);
+    dataIndex++;
+  }
+
+  // 5. Tell the host parsing finished, then persist valid parsed rows for boot
+  // recovery. A failed parse leaves dataIndex at zero, so nothing is saved.
+  Serial.println("DATASET_RECEIVED");
+  if (!saveDatasetToFlash()) {
+    printError("Failed to persist dataset to flash!");
+  } else {
+    Serial.println("DATASET_SAVED");
+  }
+  // 6. Restore the normal LED indication after success or failure.
+  setLedColor(COLOR_OFF);
+}
+
 // ============================================================================
 // MAIN LOOP
 // ============================================================================
@@ -1792,149 +1906,9 @@ void loop() {
       readTemperatureHumidity(solValveOpen);
       break;
 
-    case CommandId::LoadDataset: {
-      // Parse incoming dataset. Command: "L <N_datapoints>
-      // <Time0>,<mA0>,<E0>,<T0>,<Time1>,<mA1>,<E1>,<T1>,...,<TimeN>,<mAN>,<EN>,<TN>"
-      // where E is 0/1 solenoid enable and T is 0/1 trigger event.
-
-      setLedColor(COLOR_RECEIVING);
-
-      const char *delim = ","; // Serial dataset delimiter
-
-      if (strlen(command) < 3) {
-        printError("\"L\" command is not followed by dataset!");
-        return;
-      }
-
-      // Step 1: parse header metadata (line count + total duration).
-      // read dataset length from char 2 until space (_)
-      // "L_<length>_<dataset>" and instantialize position to start reading
-      // data from in strtok
-      char *idx = strtok(command + 2, " ");
-      incomingCount = atoi(idx); // Dataset length (int)
-
-      idx = strtok(NULL, " ");
-      datasetDuration = atoi(idx); // Dataset duration
-
-      // Check if data length is acceptable
-      if (incomingCount > MAX_DATA_LENGTH || incomingCount <= 0) {
-        printError("Data length is not allowed: 0 < N <", MAX_DATA_LENGTH);
-        resetDataArrays();
-        return;
-      }
-
-      dataIndex = 0; // Used later to only read valuable data from data arrays
-
-      // Step 2: parse all CSV quadruples into runtime arrays.
-      // Parsing rest of the dataset after handshake
-      for (int i = 0; i < incomingCount; i++) {
-
-        idx = strtok(NULL, delim); // Get next item from buffer (str_cmd). This
-                                   // item is the timestamp
-        // If the item is NULL, break
-        if (idx == NULL) {
-          printError("Token was NULL, breaking CSV parsing. Upload new "
-                     "dataset! Error at data index ",
-                     dataIndex);
-          resetDataArrays();
-          break;
-        }
-        // Convert incoming csv buffer index from string to int and add to time
-        // array
-        time_array[i] = atoi(idx);
-
-        idx = strtok(
-            NULL,
-            delim); // Get next csv buffer index. This item is the mA value
-        // Check again if item is not NULL
-        if (idx == NULL) {
-          printError("Token was NULL, breaking CSV parsing. Upload new "
-                     "dataset! Error at data index",
-                     dataIndex);
-          resetDataArrays();
-          break;
-        }
-        // Convert incoming csv buffer index from string to float and add to
-        // value array
-        value_array[i] = parseFloatInString(idx, 0);
-
-        idx = strtok(NULL, delim); // Get next csv buffer index: enable flag
-        if (idx == NULL) {
-          printError("Token was NULL, breaking CSV parsing. Upload new "
-                     "dataset! Error at data index",
-                     dataIndex);
-          resetDataArrays();
-          break;
-        }
-
-        int enableInt = -1;
-        if (strcmp(idx, "0") == 0) {
-          enableInt = 0;
-        } else if (strcmp(idx, "1") == 0) {
-          enableInt = 1;
-        }
-        if (enableInt == -1) {
-          printError("Enable flag must be 0 or 1. Upload new dataset! Error at "
-                     "data index",
-                     dataIndex);
-          resetDataArrays();
-          break;
-        }
-        sol_enable_array[i] = (uint8_t)enableInt;
-
-        idx = strtok(NULL, delim); // Get next csv buffer index: trigger flag
-        if (idx == NULL) {
-          printError("Token was NULL, breaking CSV parsing. Upload new "
-                     "dataset! Error at data index",
-                     dataIndex);
-          resetDataArrays();
-          break;
-        }
-
-        int triggerInt = -1;
-        if (strcmp(idx, "0") == 0) {
-          triggerInt = 0;
-        } else if (strcmp(idx, "1") == 0) {
-          triggerInt = 1;
-        }
-        if (triggerInt == -1) {
-          printError(
-              "Trigger flag must be 0 or 1. Upload new dataset! Error at "
-              "data index",
-              dataIndex);
-          resetDataArrays();
-          break;
-        }
-        trig_enable_array[i] = (uint8_t)triggerInt;
-
-        // Debug print whole received dataset
-        DEBUG_PRINT("Timestamp: ");
-        DEBUG_PRINT(time_array[i]);
-        DEBUG_PRINT(", mA: ");
-        DEBUG_PRINT(value_array[i]);
-        DEBUG_PRINT(", enable: ");
-        DEBUG_PRINT(sol_enable_array[i]);
-        DEBUG_PRINT(", trigger: ");
-        DEBUG_PRINTLN(trig_enable_array[i]);
-
-        // Increase working index, used later to only read valuable data from
-        // data arrays
-        dataIndex++;
-      }
-
-      Serial.println("DATASET_RECEIVED");
-
-      // Step 3: persist parsed dataset to flash for reboot recovery.
-      if (!saveDatasetToFlash()) {
-        DEBUG_PRINTLN("Failed to persist dataset to flash!");
-      } else {
-        Serial.println("DATASET_SAVED");
-      }
-
-      // LED color off when whole dataset is received
-      setLedColor(COLOR_OFF);
+    case CommandId::LoadDataset:
+      loadDataset(command);
       break;
-    }
 
     case CommandId::DatasetStatus:
       if (dataIndex == 0) {
