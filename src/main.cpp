@@ -1553,7 +1553,7 @@ void loop() {
       DEBUG_PRINTLN("N <0|1> - Nebuliser off/on (pin A3)");
       DEBUG_PRINTLN("Q       - Quit active modes and return to idle");
       DEBUG_PRINTLN("[Read Out Sensors]");
-      DEBUG_PRINTLN("P?      - Read current pressure (bar)");
+      DEBUG_PRINTLN("P?      - Read current tank pressure (bar)");
       DEBUG_PRINTLN("M?      - Read current nebuliser pressure (bar)");
       DEBUG_PRINTLN("T?      - Read temperature & humidity");
       DEBUG_PRINTLN("[Configuration]");
