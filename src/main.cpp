@@ -1557,6 +1557,75 @@ void handleClearMemory() {
   Serial.println("MEMORY_CLEARED");
 }
 
+// Open the solenoid only when it is closed, then show and report its active
+// state. The low-level open helper records the transition in the active run
+// log.
+void handleOpenSolenoid() {
+  if (!controllerState.solValveOpen) {
+    openSolValve();
+    controllerState.solValveOpen = true;
+  }
+  setLedColor(COLOR_VALVE_OPEN);
+  Serial.println("SOLENOID_OPENED");
+}
+
+// Close the solenoid when needed and restore the LED for either idle or active
+// dataset execution. The close helper records the transition in the run log.
+void handleCloseSolenoid() {
+  if (controllerState.solValveOpen) {
+    closeSolValve();
+    controllerState.solValveOpen = false;
+  }
+  setLedColor(controllerState.mode == LoopMode::ExecutingRun ? COLOR_EXECUTING
+                                                             : COLOR_IDLE);
+  Serial.println("SOLENOID_CLOSED");
+}
+
+// Stop every active controller mode and return all controlled outputs to idle.
+void handleQuit() {
+  stopActiveModes(true);
+  Serial.println("RETURNED_TO_IDLE");
+}
+
+// Start a one-shot trigger pulse. serviceTriggerPulse() clears the output after
+// TRIGGER_WIDTH microseconds during a later loop iteration.
+void handleTriggerOnce() {
+  trigOut();
+  tick = micros();
+  controllerState.performingTrigger = true;
+  Serial.println("TRIGGER_PULSE_SENT");
+}
+
+// Toggle the continuous laser-test mode, which streams photodetector readings
+// through processLaserTest(). Entering test mode first clears other controller
+// modes; a repeated request simply reports the already-active state.
+void handleLaserTestToggle(const char *command) {
+  int enable = parseIntInString(command, 1);
+  if (enable != 0 && enable != 1) {
+    printError("A expects 0 or 1!");
+    return;
+  }
+
+  bool enableLaser = enable == 1;
+  if (enableLaser && controllerState.mode != LoopMode::LaserTest) {
+    stopActiveModes(false);
+    startLaser();
+    setLedColor(COLOR_LASER);
+    controllerState.mode = LoopMode::LaserTest;
+    controllerState.laserTestLastPrint = 0;
+    Serial.println("LASER_TEST_ON");
+  } else if (!enableLaser && controllerState.mode == LoopMode::LaserTest) {
+    stopLaser();
+    setLedColor(COLOR_IDLE);
+    controllerState.mode = LoopMode::Idle;
+    Serial.println("LASER_TEST_OFF");
+  } else {
+    Serial.println(controllerState.mode == LoopMode::LaserTest
+                       ? "LASER_TEST_ON"
+                       : "LASER_TEST_OFF");
+  }
+}
+
 void printSystemStatus() {
   DEBUG_PRINTLN("\n=== System Status ===");
   DEBUG_PRINT("Solenoid valve: ");
@@ -1779,71 +1848,24 @@ void loop() {
       break;
 
     case CommandId::OpenSolenoid:
-      if (!solValveOpen) {
-        openSolValve();
-        solValveOpen = true;
-      }
-      setLedColor(COLOR_VALVE_OPEN);
-      Serial.println("SOLENOID_OPENED");
+      handleOpenSolenoid();
       break;
 
     case CommandId::CloseSolenoid:
-      if (solValveOpen) {
-        closeSolValve();
-        solValveOpen = false;
-      }
-      setLedColor(mode == LoopMode::ExecutingRun ? COLOR_EXECUTING
-                                                 : COLOR_IDLE);
-      Serial.println("SOLENOID_CLOSED");
+      handleCloseSolenoid();
       break;
 
     case CommandId::Quit:
-      stopActiveModes(true);
-      Serial.println("RETURNED_TO_IDLE");
+      handleQuit();
       break;
 
     case CommandId::TriggerOnce:
-      trigOut();
-      tick = micros();
-      performingTrigger = true;
-      Serial.println("TRIGGER_PULSE_SENT");
+      handleTriggerOnce();
       break;
 
-    case CommandId::LaserTestToggle: {
-      // Step 1: parse desired laser-test state.
-      int enable = parseIntInString(command, 1);
-      if (enable != 0 && enable != 1) {
-        printError("A expects 0 or 1!");
-        return;
-      }
-
-      bool enableLaser = (enable == 1);
-      if (enableLaser && mode != LoopMode::LaserTest) {
-        // Step 2a: entering laser-test mode from another mode:
-        // - clear all active modes/flags
-        // - turn laser on
-        // - switch loop mode + reset print ticker
-        stopActiveModes(false);
-        startLaser();
-        setLedColor(COLOR_LASER);
-        mode = LoopMode::LaserTest;
-        laserTestLastPrint = 0;
-        Serial.println("LASER_TEST_ON");
-      } else if (!enableLaser && mode == LoopMode::LaserTest) {
-        // Step 2b: leaving laser-test mode:
-        // - turn laser off
-        // - return to idle mode/LED
-        stopLaser();
-        setLedColor(COLOR_IDLE);
-        mode = LoopMode::Idle;
-        Serial.println("LASER_TEST_OFF");
-      } else {
-        // Step 2c: no state change requested; report current state.
-        Serial.println(mode == LoopMode::LaserTest ? "LASER_TEST_ON"
-                                                   : "LASER_TEST_OFF");
-      }
+    case CommandId::LaserTestToggle:
+      handleLaserTestToggle(command);
       break;
-    }
 
     case CommandId::FanSpeed: {
       // TODO: Implement fan speed control on PIN_FAN (pin 3).
