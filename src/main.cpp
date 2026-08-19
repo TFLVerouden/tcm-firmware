@@ -1168,6 +1168,9 @@ void handleLoadDataset(char *command) {
 // ============================================================================
 // CONTROLLER SERVICES AND STATE MACHINES
 // ============================================================================
+// ---------------------------------------------------------------------------
+// Cough runs
+// ---------------------------------------------------------------------------
 // Enter flow-curve execution from either the immediate R path or the delayed
 // droplet-detection path. This resets per-run timing and actuator state so a
 // new run cannot inherit an open valve or an active trigger pulse.
@@ -1189,6 +1192,9 @@ void beginDatasetExecution(const char *statusMessage) {
   Serial.println(statusMessage);
 }
 
+// ---------------------------------------------------------------------------
+// Periodic services
+// ---------------------------------------------------------------------------
 // Complete an active trigger pulse after its configured width has elapsed.
 // This must be serviced every loop iteration to guarantee that the output pin
 // is returned LOW even when no dataset row is currently due.
@@ -1206,6 +1212,9 @@ void pollPressureSensors() {
   neb_RClick.poll_EMA();
 }
 
+// ---------------------------------------------------------------------------
+// Droplet detection state machine
+// ---------------------------------------------------------------------------
 // Arm laser-based droplet detection. Detect-and-run mode requires both a
 // loaded dataset and configured tank pressure; detect-only mode has neither
 // prerequisite. The function resets edge-tracking state before enabling laser.
@@ -1220,6 +1229,9 @@ bool startDropletDetection(bool runAfterDetection) {
   }
 
   if (controllerState.solValveOpen) {
+    // ---------------------------------------------------------------------------
+    // Dataset execution state machine
+    // ---------------------------------------------------------------------------
     closeSolValve();
     controllerState.solValveOpen = false;
   }
@@ -1450,21 +1462,14 @@ void armDropletMode(bool runAfterDetection, int32_t requestedCount,
 }
 
 // ============================================================================
-// SERIAL COMMAND HANDLERS
+// COMPLEX SERIAL COMMAND OPERATIONS
 // ============================================================================
-// These handlers contain command-specific serial output, keeping loop() focused
-// on parsing and dispatching rather than presentation details.
-void handleIdQuery() { Serial.println("TCM_control"); }
+// These operations are kept outside loop() because they validate or update
+// shared hardware, persistence, dataset, or controller state.
 
-void handleProtocolVersionQuery() {
-  Serial.print("PROTO ");
-  Serial.println(TCM_PROTOCOL_VERSION);
-}
-
-void handleUnknownCommand(const char *command) {
-  printError("Unknown command:", command);
-}
-
+// ---------------------------------------------------------------------------
+// Pressure and Valve Setpoints
+// ---------------------------------------------------------------------------
 // Set the proportional valve current after checking its 4-20 mA operating
 // range. The serial reply reports the current accepted by the hardware driver.
 void handleSetValve(const char *command) {
@@ -1517,79 +1522,9 @@ void handleSetNebPressure(const char *command) {
   Serial.println(bar, 2);
 }
 
-// Set and persist the delay between a run request or droplet event and dataset
-// execution. The value is interpreted as an unsigned number of microseconds.
-void handleSetWait(const char *command) {
-  pre_trigger_delay_us = parseIntInString(command, 1);
-  waitInitializedFromFlash = true;
-  savePersistentState();
-  DEBUG_PRINT("Pre-trigger wait: ");
-  DEBUG_PRINT(pre_trigger_delay_us);
-  DEBUG_PRINTLN(" µs");
-  Serial.print("SET_WAIT ");
-  Serial.println(pre_trigger_delay_us);
-}
-
-// Report the configured pre-trigger delay using the compact serial protocol.
-void handleWaitQuery() {
-  Serial.print("W");
-  Serial.println(pre_trigger_delay_us);
-}
-
-// Remove experiment log files and reset their in-memory session bookkeeping.
-void handleClearLogs() {
-  clearRunCsvFiles();
-  clearSessionTracking();
-  Serial.println("LOGS_CLEARED");
-}
-
-// Clear all user-persisted data: logs, pressure/wait settings, and dataset.
-void handleClearMemory() {
-  clearRunCsvFiles();
-  clearPersistentStateAndDataset();
-  clearSessionTracking();
-  Serial.println("MEMORY_CLEARED");
-}
-
-// Open the solenoid only when it is closed, then show and report its active
-// state. The low-level open helper records the transition in the active run
-// log.
-void handleOpenSolenoid() {
-  if (!controllerState.solValveOpen) {
-    openSolValve();
-    controllerState.solValveOpen = true;
-  }
-  setLedColor(COLOR_VALVE_OPEN);
-  Serial.println("SOLENOID_OPENED");
-}
-
-// Close the solenoid when needed and restore the LED for either idle or active
-// dataset execution. The close helper records the transition in the run log.
-void handleCloseSolenoid() {
-  if (controllerState.solValveOpen) {
-    closeSolValve();
-    controllerState.solValveOpen = false;
-  }
-  setLedColor(controllerState.mode == LoopMode::ExecutingRun ? COLOR_EXECUTING
-                                                             : COLOR_IDLE);
-  Serial.println("SOLENOID_CLOSED");
-}
-
-// Stop every active controller mode and return all controlled outputs to idle.
-void handleQuit() {
-  stopActiveModes(true);
-  Serial.println("RETURNED_TO_IDLE");
-}
-
-// Start a one-shot trigger pulse. serviceTriggerPulse() clears the output after
-// TRIGGER_WIDTH microseconds during a later loop iteration.
-void handleTriggerOnce() {
-  trigOut();
-  tick = micros();
-  controllerState.performingTrigger = true;
-  Serial.println("TRIGGER_PULSE_SENT");
-}
-
+// ---------------------------------------------------------------------------
+// Hardware control and test mode
+// ---------------------------------------------------------------------------
 // Toggle the continuous laser-test mode, which streams photodetector readings
 // through processLaserTest(). Entering test mode first clears other controller
 // modes; a repeated request simply reports the already-active state.
@@ -1618,18 +1553,6 @@ void handleLaserTestToggle(const char *command) {
                        ? "LASER_TEST_ON"
                        : "LASER_TEST_OFF");
   }
-}
-
-// Switch the nebuliser enable pin after validating its binary on/off argument.
-void handleNebuliserToggle(const char *command) {
-  int enable = parseIntInString(command, 1);
-  if (enable != 0 && enable != 1) {
-    printError("N expects 0 or 1!");
-    return;
-  }
-
-  digitalWrite(PIN_NEB, enable == 1 ? HIGH : LOW);
-  Serial.println(enable == 1 ? "NEBULISER_ON" : "NEBULISER_OFF");
 }
 
 // Set the light PWM duty from a normalized decimal in the inclusive range
@@ -1666,22 +1589,9 @@ void handleLightToggle(char *command) {
   Serial.println(static_cast<int>(duty));
 }
 
-// Enable or disable diagnostic serial output. Debug output remains opt-in so
-// normal serial traffic stays suitable for host-side parsing.
-void handleDebugToggle(const char *command) {
-  int enable = parseIntInString(command, 1);
-  if (enable != 0 && enable != 1) {
-    printError("B expects 0 or 1!");
-    return;
-  }
-  debug_enabled = enable == 1;
-  Serial.println(debug_enabled ? "DEBUG_ON" : "DEBUG_OFF");
-}
-
-// Keep the fan protocol command available while its PWM hardware behavior is
-// still intentionally unimplemented. TODO!!
-void handleFanSpeed() { Serial.println("FAN_SPEED_SET"); }
-
+// ---------------------------------------------------------------------------
+// Run and droplet modes
+// ---------------------------------------------------------------------------
 // Parse D or D! count semantics and arm the selected droplet mode. D! resets
 // run-log session files because it executes datasets; D only detects droplets.
 void handleDropletCommand(const char *command, bool runAfterDetection) {
@@ -1690,46 +1600,6 @@ void handleDropletCommand(const char *command, bool runAfterDetection) {
     return;
   }
   armDropletMode(runAfterDetection, requestedCount, runAfterDetection);
-}
-
-// Read and report the nebuliser pressure using the same conversion and debug
-// diagnostics as the tank pressure read command.
-void handleReadNebPressure() {
-  Serial.print("M");
-  Serial.println(
-      pressureCurrentToBar(neb_RClick.get_EMA_mA(), NEB_PRESS_CALIBRATION));
-  DEBUG_PRINT("R Click bitvalue: ");
-  DEBUG_PRINTLN(neb_RClick.get_EMA_bitval());
-  DEBUG_PRINT("R Click mA: ");
-  DEBUG_PRINTLN(neb_RClick.get_EMA_mA());
-}
-
-// Read temperature and humidity, restoring the LED that reflects the current
-// solenoid state after the sensor's temporary reading indication.
-void handleReadTemperatureHumidity() {
-  setLedColor(COLOR_READING);
-  sensors_event_t humidity, temp;
-  sht4.getEvent(&humidity, &temp);
-
-  Serial.print("T");
-  Serial.print(temp.temperature);
-  Serial.print(" H");
-  Serial.println(humidity.relative_humidity);
-
-  setLedColor(controllerState.solValveOpen ? COLOR_VALVE_OPEN : COLOR_IDLE);
-}
-
-// Report whether a dataset is ready, together with its row count and duration.
-void handleDatasetStatus() {
-  if (dataset.loadedCount == 0) {
-    Serial.println("NO_DATASET");
-    return;
-  }
-  Serial.print("DATASET: ");
-  Serial.print(dataset.receivedCount);
-  Serial.print(" LINES AND ");
-  Serial.print(dataset.durationMs);
-  Serial.println(" MS");
 }
 
 // Start a single flow-curve run. A valid uploaded dataset and configured tank
@@ -1758,6 +1628,9 @@ void handleRun() {
   beginDatasetExecution("STARTING_RUN");
 }
 
+// ---------------------------------------------------------------------------
+// Diagnostic status output
+// ---------------------------------------------------------------------------
 void printSystemStatus() {
   DEBUG_PRINTLN("\n=== System Status ===");
   DEBUG_PRINT("Solenoid valve: ");
@@ -1862,22 +1735,32 @@ void loop() {
     CommandId commandId = parseCommandId(command);
     switch (commandId) {
     case CommandId::IdQuery:
-      handleIdQuery();
+      Serial.println("TCM_control");
       break;
 
     case CommandId::ProtocolVersionQuery:
-      handleProtocolVersionQuery();
+      Serial.print("PROTO ");
+      Serial.println(TCM_PROTOCOL_VERSION);
       break;
 
-    case CommandId::DebugToggle:
-      handleDebugToggle(command);
+    case CommandId::DebugToggle: {
+      // Debug output is opt-in so normal serial traffic stays machine-readable.
+      int enable = parseIntInString(command, 1);
+      if (enable != 0 && enable != 1) {
+        printError("B expects 0 or 1!");
+        return;
+      }
+      debug_enabled = enable == 1;
+      Serial.println(debug_enabled ? "DEBUG_ON" : "DEBUG_OFF");
       break;
+    }
 
     case CommandId::StatusQuery:
       printSystemStatus();
       break;
 
     case CommandId::Help:
+      // Help remains a debug-only command for the same protocol reason.
       if (!debug_enabled) {
         printError("Help menu is only available when debug output is enabled! "
                    "Enable with B 1 command.");
@@ -1887,19 +1770,36 @@ void loop() {
       break;
 
     case CommandId::WaitSet:
-      handleSetWait(command);
+      // Persist the delay between a run request/droplet event and execution.
+      pre_trigger_delay_us = parseIntInString(command, 1);
+      waitInitializedFromFlash = true;
+      savePersistentState();
+      DEBUG_PRINT("Pre-trigger wait: ");
+      DEBUG_PRINT(pre_trigger_delay_us);
+      DEBUG_PRINTLN(" µs");
+      Serial.print("SET_WAIT ");
+      Serial.println(pre_trigger_delay_us);
       break;
 
     case CommandId::WaitQuery:
-      handleWaitQuery();
+      // Reply uses the compact W<us> protocol form.
+      Serial.print("W");
+      Serial.println(pre_trigger_delay_us);
       break;
 
     case CommandId::ClearMemory:
-      handleClearMemory();
+      // Full clear removes logs, persisted settings, and the stored dataset.
+      clearRunCsvFiles();
+      clearPersistentStateAndDataset();
+      clearSessionTracking();
+      Serial.println("MEMORY_CLEARED");
       break;
 
     case CommandId::ClearLogs:
-      handleClearLogs();
+      // Log clear leaves persisted settings and the uploaded dataset intact.
+      clearRunCsvFiles();
+      clearSessionTracking();
+      Serial.println("LOGS_CLEARED");
       break;
 
     case CommandId::SetValve:
@@ -1915,19 +1815,39 @@ void loop() {
       break;
 
     case CommandId::OpenSolenoid:
-      handleOpenSolenoid();
+      // The low-level helper records this transition when a run log is active.
+      if (!controllerState.solValveOpen) {
+        openSolValve();
+        controllerState.solValveOpen = true;
+      }
+      setLedColor(COLOR_VALVE_OPEN);
+      Serial.println("SOLENOID_OPENED");
       break;
 
     case CommandId::CloseSolenoid:
-      handleCloseSolenoid();
+      // Restore the LED for either an executing dataset or idle state.
+      if (controllerState.solValveOpen) {
+        closeSolValve();
+        controllerState.solValveOpen = false;
+      }
+      setLedColor(controllerState.mode == LoopMode::ExecutingRun
+                      ? COLOR_EXECUTING
+                      : COLOR_IDLE);
+      Serial.println("SOLENOID_CLOSED");
       break;
 
     case CommandId::Quit:
-      handleQuit();
+      // Centralized teardown returns every controlled output to a safe state.
+      stopActiveModes(true);
+      Serial.println("RETURNED_TO_IDLE");
       break;
 
     case CommandId::TriggerOnce:
-      handleTriggerOnce();
+      // The periodic trigger service clears this pulse after TRIGGER_WIDTH.
+      trigOut();
+      tick = micros();
+      controllerState.performingTrigger = true;
+      Serial.println("TRIGGER_PULSE_SENT");
       break;
 
     case CommandId::LaserTestToggle:
@@ -1935,12 +1855,21 @@ void loop() {
       break;
 
     case CommandId::FanSpeed:
-      handleFanSpeed();
+      // Reserved protocol command; fan PWM hardware is not implemented yet.
+      Serial.println("FAN_SPEED_SET");
       break;
 
-    case CommandId::NebuliserToggle:
-      handleNebuliserToggle(command);
+    case CommandId::NebuliserToggle: {
+      // Nebuliser enable is a binary digital output.
+      int enable = parseIntInString(command, 1);
+      if (enable != 0 && enable != 1) {
+        printError("N expects 0 or 1!");
+        return;
+      }
+      digitalWrite(PIN_NEB, enable == 1 ? HIGH : LOW);
+      Serial.println(enable == 1 ? "NEBULISER_ON" : "NEBULISER_OFF");
       break;
+    }
 
     case CommandId::LightToggle:
       handleLightToggle(command);
@@ -1951,11 +1880,26 @@ void loop() {
       break;
 
     case CommandId::ReadNebPressure:
-      handleReadNebPressure();
+      // Match the tank-pressure reply format with nebuliser calibration.
+      Serial.print("M");
+      Serial.println(
+          pressureCurrentToBar(neb_RClick.get_EMA_mA(), NEB_PRESS_CALIBRATION));
+      DEBUG_PRINT("R Click bitvalue: ");
+      DEBUG_PRINTLN(neb_RClick.get_EMA_bitval());
+      DEBUG_PRINT("R Click mA: ");
+      DEBUG_PRINTLN(neb_RClick.get_EMA_mA());
       break;
 
     case CommandId::ReadTempHumidity:
-      handleReadTemperatureHumidity();
+      // Indicate the sensor read briefly, then restore the current valve LED.
+      setLedColor(COLOR_READING);
+      sensors_event_t humidity, temp;
+      sht4.getEvent(&humidity, &temp);
+      Serial.print("T");
+      Serial.print(temp.temperature);
+      Serial.print(" H");
+      Serial.println(humidity.relative_humidity);
+      setLedColor(controllerState.solValveOpen ? COLOR_VALVE_OPEN : COLOR_IDLE);
       break;
 
     case CommandId::LoadDataset:
@@ -1963,7 +1907,16 @@ void loop() {
       break;
 
     case CommandId::DatasetStatus:
-      handleDatasetStatus();
+      // A dataset is ready only after at least one complete row was loaded.
+      if (dataset.loadedCount == 0) {
+        Serial.println("NO_DATASET");
+      } else {
+        Serial.print("DATASET: ");
+        Serial.print(dataset.receivedCount);
+        Serial.print(" LINES AND ");
+        Serial.print(dataset.durationMs);
+        Serial.println(" MS");
+      }
       break;
 
     case CommandId::Run:
@@ -1979,7 +1932,7 @@ void loop() {
       break;
 
     case CommandId::Other:
-      handleUnknownCommand(command);
+      printError("Unknown command:", command);
       break;
     }
   }
