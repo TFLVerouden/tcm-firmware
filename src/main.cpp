@@ -22,6 +22,7 @@
 #include "DvG_StreamCommand.h"
 #include "MIKROE_4_20mA_RT_Click.h"
 #include "SdFat.h"
+#include "commands.h"
 #include <Adafruit_DotStar.h>
 #include <Adafruit_SHT4x.h>
 #include <Arduino.h>
@@ -134,90 +135,6 @@ const uint32_t COLOR_WAITING = 0x400040;
 const uint32_t COLOR_RECEIVING = 0x100000;
 const uint32_t COLOR_EXECUTING = 0xFF0000;
 const uint32_t COLOR_OFF = 0x000000;
-
-// ============================================================================
-// SERIAL COMMAND DEFINITIONS
-// ============================================================================
-// Incoming serial lines are first mapped to a CommandId by matching this table,
-// then the command dispatcher performs the corresponding action. Commands with
-// shared prefixes (for example P? and P) rely on the most specific entry first.
-enum class CommandId : uint8_t {
-  IdQuery,
-  ProtocolVersionQuery,
-  DebugToggle,
-  StatusQuery,
-  Help,
-  SetValve,
-  SetTankPressure,
-  SetNebPressure,
-  OpenSolenoid,
-  CloseSolenoid,
-  Quit,
-  TriggerOnce,
-  LaserTestToggle,
-  LightToggle,
-  FanSpeed,
-  NebuliserToggle,
-  ReadTankPressure,
-  ReadNebPressure,
-  ReadTempHumidity,
-  WaitSet,
-  WaitQuery,
-  ClearMemory,
-  ClearLogs,
-  LoadDataset,
-  DatasetStatus,
-  Run,
-  DropletRun,
-  DropletDetect,
-  Other
-};
-
-struct CommandDefinition {
-  const char *prefix;
-  CommandId id;
-};
-
-// Order matters: more specific command prefixes must appear first.
-const CommandDefinition COMMAND_DEFINITIONS[] = {
-    {"id?", CommandId::IdQuery},
-    {"ver?", CommandId::ProtocolVersionQuery},
-    {"S?", CommandId::StatusQuery},
-    {"P?", CommandId::ReadTankPressure},
-    {"M?", CommandId::ReadNebPressure},
-    {"T?", CommandId::ReadTempHumidity},
-    {"W?", CommandId::WaitQuery},
-    {"X!", CommandId::ClearMemory},
-    {"L?", CommandId::DatasetStatus},
-    {"D!", CommandId::DropletRun},
-    {"B", CommandId::DebugToggle},
-    {"V", CommandId::SetValve},
-    {"P", CommandId::SetTankPressure},
-    {"M", CommandId::SetNebPressure},
-    {"O", CommandId::OpenSolenoid},
-    {"C", CommandId::CloseSolenoid},
-    {"Q", CommandId::Quit},
-    {"G", CommandId::TriggerOnce},
-    {"A", CommandId::LaserTestToggle},
-    {"I", CommandId::LightToggle},
-    {"F", CommandId::FanSpeed},
-    {"N", CommandId::NebuliserToggle},
-    {"W", CommandId::WaitSet},
-    {"X", CommandId::ClearLogs},
-    {"L", CommandId::LoadDataset},
-    {"R", CommandId::Run},
-    {"D", CommandId::DropletDetect},
-    {"?", CommandId::Help},
-};
-
-CommandId parseCommandId(const char *command) {
-  for (const CommandDefinition &definition : COMMAND_DEFINITIONS) {
-    if (strncmp(command, definition.prefix, strlen(definition.prefix)) == 0) {
-      return definition.id;
-    }
-  }
-  return CommandId::Other;
-}
 
 bool parseDropletRunCount(const char *command, bool runAfterDetection,
                           int32_t &requestedCount) {
