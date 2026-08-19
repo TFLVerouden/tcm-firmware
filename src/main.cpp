@@ -24,6 +24,7 @@
 #include "SdFat.h"
 #include "commands.h"
 #include "controller_state.h"
+#include "firmware_runtime.h"
 #include "flow_curve_dataset.h"
 #include "help_menu.h"
 #include <Adafruit_DotStar.h>
@@ -242,6 +243,13 @@ uint32_t runCallTime = 0; // Time elapsed since "RUN" command [µs]
 
 // Persistent state and session tracking
 uint32_t lastSessionCount = 0;
+
+// Shared runtime dependencies for modules introduced during the file split.
+FirmwareRuntime<MAX_DATA_LENGTH> firmware{
+  controllerState,      dataset,            debug_enabled,
+  tick,                 pre_trigger_delay_us, pda_delay,
+  dropletRunsRemaining, runCallTime};
+
 // Pressure sensor (4-20mA R-Click) with exponential moving average filtering
 R_Click tank_RClick(PIN_TANK_CS_RCLICK, R_CLICK_CALIBRATION,
                     RCLICK_EMA_INTERVAL, RCLICK_EMA_LP_FREQ);
