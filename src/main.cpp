@@ -136,6 +136,90 @@ const uint32_t COLOR_EXECUTING = 0xFF0000;
 const uint32_t COLOR_OFF = 0x000000;
 
 // ============================================================================
+// SERIAL COMMAND DEFINITIONS
+// ============================================================================
+// Incoming serial lines are first mapped to a CommandId by matching this table,
+// then the command dispatcher performs the corresponding action. Commands with
+// shared prefixes (for example P? and P) rely on the most specific entry first.
+enum class CommandId : uint8_t {
+  IdQuery,
+  ProtocolVersionQuery,
+  DebugToggle,
+  StatusQuery,
+  Help,
+  SetValve,
+  SetTankPressure,
+  SetNebPressure,
+  OpenSolenoid,
+  CloseSolenoid,
+  Quit,
+  TriggerOnce,
+  LaserTestToggle,
+  LightToggle,
+  FanSpeed,
+  NebuliserToggle,
+  ReadTankPressure,
+  ReadNebPressure,
+  ReadTempHumidity,
+  WaitSet,
+  WaitQuery,
+  ClearMemory,
+  ClearLogs,
+  LoadDataset,
+  DatasetStatus,
+  Run,
+  DropletRun,
+  DropletDetect,
+  Other
+};
+
+struct CommandDefinition {
+  const char *prefix;
+  CommandId id;
+};
+
+// Order matters: more specific command prefixes must appear first.
+const CommandDefinition COMMAND_DEFINITIONS[] = {
+    {"id?", CommandId::IdQuery},
+    {"ver?", CommandId::ProtocolVersionQuery},
+    {"S?", CommandId::StatusQuery},
+    {"P?", CommandId::ReadTankPressure},
+    {"M?", CommandId::ReadNebPressure},
+    {"T?", CommandId::ReadTempHumidity},
+    {"W?", CommandId::WaitQuery},
+    {"X!", CommandId::ClearMemory},
+    {"L?", CommandId::DatasetStatus},
+    {"D!", CommandId::DropletRun},
+    {"B", CommandId::DebugToggle},
+    {"V", CommandId::SetValve},
+    {"P", CommandId::SetTankPressure},
+    {"M", CommandId::SetNebPressure},
+    {"O", CommandId::OpenSolenoid},
+    {"C", CommandId::CloseSolenoid},
+    {"Q", CommandId::Quit},
+    {"G", CommandId::TriggerOnce},
+    {"A", CommandId::LaserTestToggle},
+    {"I", CommandId::LightToggle},
+    {"F", CommandId::FanSpeed},
+    {"N", CommandId::NebuliserToggle},
+    {"W", CommandId::WaitSet},
+    {"X", CommandId::ClearLogs},
+    {"L", CommandId::LoadDataset},
+    {"R", CommandId::Run},
+    {"D", CommandId::DropletDetect},
+    {"?", CommandId::Help},
+};
+
+CommandId parseCommandId(const char *command) {
+  for (const CommandDefinition &definition : COMMAND_DEFINITIONS) {
+    if (strncmp(command, definition.prefix, strlen(definition.prefix)) == 0) {
+      return definition.id;
+    }
+  }
+  return CommandId::Other;
+}
+
+// ============================================================================
 // RUNTIME STATE AND HARDWARE
 // ============================================================================
 // Debug output is disabled by default and can be enabled via the B command.
@@ -1316,99 +1400,6 @@ void loop() {
     char *command =
         sc.getCommand(); // Pointer to memory location of serial buffer contents
 
-    enum class CommandId : uint8_t {
-      IdQuery,
-      ProtocolVersionQuery,
-      DebugToggle,
-      StatusQuery,
-      Help,
-      SetValve,
-      SetTankPressure,
-      SetNebPressure,
-      OpenSolenoid,
-      CloseSolenoid,
-      Quit,
-      TriggerOnce,
-      LaserTestToggle,
-      LightToggle,
-      FanSpeed,
-      NebuliserToggle,
-      ReadTankPressure,
-      ReadNebPressure,
-      ReadTempHumidity,
-      WaitSet,
-      WaitQuery,
-      ClearMemory,
-      ClearLogs,
-      LoadDataset,
-      DatasetStatus,
-      Run,
-      DropletRun,
-      DropletDetect,
-      Other
-    };
-
-    auto classifyCommand = [&](const char *cmd) -> CommandId {
-      // Preserve matching precedence for overlapping prefixes
-      if (strncmp(cmd, "id?", 3) == 0)
-        return CommandId::IdQuery;
-      if (strncmp(cmd, "ver?", 4) == 0)
-        return CommandId::ProtocolVersionQuery;
-      if (strncmp(cmd, "S?", 2) == 0)
-        return CommandId::StatusQuery;
-      if (strncmp(cmd, "P?", 2) == 0)
-        return CommandId::ReadTankPressure;
-      if (strncmp(cmd, "M?", 2) == 0)
-        return CommandId::ReadNebPressure;
-      if (strncmp(cmd, "T?", 2) == 0)
-        return CommandId::ReadTempHumidity;
-      if (strncmp(cmd, "W?", 2) == 0)
-        return CommandId::WaitQuery;
-      if (strncmp(cmd, "X!", 2) == 0)
-        return CommandId::ClearMemory;
-      if (strncmp(cmd, "L?", 2) == 0)
-        return CommandId::DatasetStatus;
-      if (strncmp(cmd, "D!", 2) == 0)
-        return CommandId::DropletRun;
-      if (strncmp(cmd, "B", 1) == 0)
-        return CommandId::DebugToggle;
-      if (strncmp(cmd, "V", 1) == 0)
-        return CommandId::SetValve;
-      if (strncmp(cmd, "P", 1) == 0)
-        return CommandId::SetTankPressure;
-      if (strncmp(cmd, "M", 1) == 0)
-        return CommandId::SetNebPressure;
-      if (strncmp(cmd, "O", 1) == 0)
-        return CommandId::OpenSolenoid;
-      if (strncmp(cmd, "C", 1) == 0)
-        return CommandId::CloseSolenoid;
-      if (strncmp(cmd, "Q", 1) == 0)
-        return CommandId::Quit;
-      if (strncmp(cmd, "G", 1) == 0)
-        return CommandId::TriggerOnce;
-      if (strncmp(cmd, "A", 1) == 0)
-        return CommandId::LaserTestToggle;
-      if (strncmp(cmd, "I", 1) == 0)
-        return CommandId::LightToggle;
-      if (strncmp(cmd, "F", 1) == 0)
-        return CommandId::FanSpeed;
-      if (strncmp(cmd, "N", 1) == 0)
-        return CommandId::NebuliserToggle;
-      if (strncmp(cmd, "W", 1) == 0)
-        return CommandId::WaitSet;
-      if (strncmp(cmd, "X", 1) == 0)
-        return CommandId::ClearLogs;
-      if (strncmp(cmd, "L", 1) == 0)
-        return CommandId::LoadDataset;
-      if (strncmp(cmd, "R", 1) == 0)
-        return CommandId::Run;
-      if (strncmp(cmd, "D", 1) == 0)
-        return CommandId::DropletDetect;
-      if (strncmp(cmd, "?", 1) == 0)
-        return CommandId::Help;
-      return CommandId::Other;
-    };
-
     auto parseDropletRunCount = [&](const char *cmd, bool runAfterDetection,
                                     int32_t &requestedCount) -> bool {
       // Shared parser for D / D! count semantics:
@@ -1457,7 +1448,7 @@ void loop() {
       }
     };
 
-    CommandId commandId = classifyCommand(command);
+    CommandId commandId = parseCommandId(command);
     switch (commandId) {
     case CommandId::IdQuery:
       Serial.println("TCM_control");
