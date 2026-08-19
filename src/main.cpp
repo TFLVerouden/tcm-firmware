@@ -244,6 +244,33 @@ bool parseDropletRunCount(const char *command, bool runAfterDetection,
 }
 
 // ============================================================================
+// CONTROLLER STATE
+// ============================================================================
+// State shared by the run, droplet-detection, trigger, and laser-test flows.
+enum class LoopMode : uint8_t {
+  Idle,
+  DropletDetect,
+  DelayBeforeRun,
+  ExecutingRun,
+  LaserTest
+};
+
+struct ControllerState {
+  LoopMode mode = LoopMode::Idle;
+  bool solValveOpen = false;
+  bool performingTrigger = false;
+  bool belowThreshold = false;
+  bool detectionBaselineReady = false;
+  uint32_t delayedRunStartTime = 0;
+  uint32_t detectionStartTime = 0;
+  bool runAfterDropletDetection = false;
+  bool pressureConfigured = false;
+  uint32_t laserTestLastPrint = 0;
+};
+
+ControllerState controllerState;
+
+// ============================================================================
 // RUNTIME STATE AND HARDWARE
 // ============================================================================
 // Debug output is disabled by default and can be enabled via the B command.
@@ -772,6 +799,8 @@ void setup() {
     // Fall back to default only when no persisted value was loaded
     pressure.set_mA(DEF_PRESSURE);
   }
+  controllerState.pressureConfigured = pressureInitializedFromFlash;
+
   // Restore last loaded dataset if available
   if (!loadDatasetFromFlash()) {
     resetDataArrays();
@@ -1158,15 +1187,6 @@ void loop() {
    * 5) Serial command dispatch
    */
 
-  // Persistent loop state (retained across iterations)
-  enum class LoopMode : uint8_t {
-    Idle,
-    DropletDetect,
-    DelayBeforeRun,
-    ExecutingRun,
-    LaserTest
-  };
-
   // LoopMode transition guide:
   // - Idle -> DropletDetect: D / D! commands via startDropletDetection(...)
   // - Idle -> DelayBeforeRun: R when pre_trigger_delay_us > 0
@@ -1179,20 +1199,18 @@ void loop() {
   // - LaserTest -> Idle: A 0 or stopActiveModes(...)
   // - Any mode -> Idle: stopActiveModes(...)
 
-  static LoopMode mode = LoopMode::Idle;
-  static bool solValveOpen = false;      // Tracks if valve is currently open
-  static bool performingTrigger = false; // Tracks if trigger pulse is active
-  static bool belowThreshold = false;    // Tracks if signal is below threshold
-  static bool detectionBaselineReady =
-      false; // True after first valid post-delay sample is captured
-  static uint32_t delayedRunStartTime = 0; // When delay waiting started [µs]
-  static uint32_t detectionStartTime =
-      0; // When laser/detection was started [µs]
-  static bool runAfterDropletDetection =
-      false; // True: detect then run flow curve
-  static bool setPressure =
-      pressureInitializedFromFlash; // Tracks if pressure regulator has been set
-  static uint32_t laserTestLastPrint = 0; // Last photodiode print time [ms]
+    // Local aliases keep this incremental refactor readable while the helpers
+    // below are still lambdas. They will be replaced by named functions next.
+    LoopMode &mode = controllerState.mode;
+    bool &solValveOpen = controllerState.solValveOpen;
+    bool &performingTrigger = controllerState.performingTrigger;
+    bool &belowThreshold = controllerState.belowThreshold;
+    bool &detectionBaselineReady = controllerState.detectionBaselineReady;
+    uint32_t &delayedRunStartTime = controllerState.delayedRunStartTime;
+    uint32_t &detectionStartTime = controllerState.detectionStartTime;
+    bool &runAfterDropletDetection = controllerState.runAfterDropletDetection;
+    bool &setPressure = controllerState.pressureConfigured;
+    uint32_t &laserTestLastPrint = controllerState.laserTestLastPrint;
 
   /* ----------------------------------------------------------------------- */
   /* [HELPER] Arm droplet detection mode                                     */
