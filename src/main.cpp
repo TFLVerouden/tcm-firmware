@@ -46,7 +46,7 @@ void resetDataArrays();
 // Runtime state and hardware objects begin in the next section.
 
 // Protocol and serial communication
-const uint8_t TCM_PROTOCOL_VERSION = 6;
+const uint8_t TCM_PROTOCOL_VERSION = 7;
 const uint32_t SERIAL_BAUD_RATE = 115200;
 const uint32_t SERIAL_TIMEOUT_MS = 10;
 
@@ -246,9 +246,8 @@ uint32_t lastSessionCount = 0;
 
 // Shared runtime dependencies for modules introduced during the file split.
 FirmwareRuntime<MAX_DATA_LENGTH> firmware{
-  controllerState,      dataset,            debug_enabled,
-  tick,                 pre_trigger_delay_us, pda_delay,
-  dropletRunsRemaining, runCallTime};
+    controllerState,      dataset,   debug_enabled,        tick,
+    pre_trigger_delay_us, pda_delay, dropletRunsRemaining, runCallTime};
 
 // Pressure sensor (4-20mA R-Click) with exponential moving average filtering
 R_Click tank_RClick(PIN_TANK_CS_RCLICK, R_CLICK_CALIBRATION,
