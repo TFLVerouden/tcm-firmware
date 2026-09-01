@@ -42,7 +42,7 @@ void resetDataArrays();
 // Runtime state and hardware objects begin in the next section.
 
 // Protocol and serial communication
-const uint8_t TCM_PROTOCOL_VERSION = 6;
+const uint8_t TCM_PROTOCOL_VERSION = 7;
 const uint32_t SERIAL_BAUD_RATE = 115200;
 const uint32_t SERIAL_TIMEOUT_MS = 10;
 
