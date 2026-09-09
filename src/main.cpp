@@ -32,7 +32,7 @@
 // ============================================================================
 // Versioned serial contract used by host software to enforce compatibility.
 // Keep this as a single integer and bump only on breaking serial changes.
-const uint8_t TCM_PROTOCOL_VERSION = 6;
+const uint8_t TCM_PROTOCOL_VERSION = 8;
 
 // ============================================================================
 // FORWARD DECLARATIONS
@@ -91,7 +91,7 @@ const uint16_t CMD_BUF_LEN =
 int incomingCount = 0;           // Declare incoming dataset length globally
 char cmd_buf[CMD_BUF_LEN]{'\0'}; // Instantiate empty Serial buffer
 uint32_t time_array[MAX_DATA_LENGTH];       // Time dataset
-float value_array[MAX_DATA_LENGTH];         // mA dataset
+float flow_lps_array[MAX_DATA_LENGTH];      // L/s dataset
 uint8_t sol_enable_array[MAX_DATA_LENGTH];  // 0/1: solenoid enable
 uint8_t trig_enable_array[MAX_DATA_LENGTH]; // 0/1: trigger pulse event
 // Create DvG_StreamCommand object on Serial stream
@@ -122,7 +122,8 @@ FatFileSystem fatfs;
 struct __attribute__((__packed__)) LogEntry {
   uint32_t timestamp; // 4 bytes (micros)
   int8_t valve1;      // 1 byte (1, 0, -1)
-  float valve2_mA;    // 4 bytes
+  float req_flow;     // 4 bytes
+  float valve2;       // 4 bytes
   float pressure;     // 4 bytes
 };
 
@@ -188,8 +189,7 @@ const char *DATASET_FILE = "dataset_state.bin"; // Stores last loaded flow curve
 // Pressure sensor (4-20mA R-Click) with exponential moving average filtering
 const uint32_t EMA_INTERVAL = 10; // Sampling interval for EMA [µs]
 const float EMA_LP_FREQ = 500.;   // Low-pass filter cutoff frequency [Hz]
-const uint32_t FLOW_CURVE_PRESSURE_STREAM_INTERVAL_MS =
-    1; // Temporary test stream interval during run [ms]
+
 // Initialize with calibration values: p1_mA, p2_mA, p1_bitval, p2_bitval
 R_Click tank_RClick(PIN_TANK_CS_RCLICK,
                     RT_Click_Calibration{4.04, 10.98, 806, 2191}, EMA_INTERVAL,
@@ -279,7 +279,7 @@ void endRunLog() { runLogActive = false; }
 // ============================================================================
 // FUNCTION TO STORE EXECUTION EVENTS IN RAM
 // ============================================================================
-void recordEvent(int8_t v1, float v2, float press) {
+void recordEvent(int8_t v1, float f, float v2, float press) {
   // Only record events that belong to an actively executing flow-curve run.
   if (!runLogActive) {
     return;
@@ -287,7 +287,7 @@ void recordEvent(int8_t v1, float v2, float press) {
 
   // Append a log entry if there is space
   if (currentCount < MAX_RECORDS) {
-    logs[currentCount] = {micros(), v1, v2, press};
+    logs[currentCount] = {micros(), v1, f, v2, press};
     currentCount++;
   }
 }
@@ -299,6 +299,13 @@ float pressureBarToCurrent(float bar, const PressureCalibration &calibration) {
 float pressureCurrentToBar(float current_mA,
                            const PressureCalibration &calibration) {
   return calibration.read_bar_per_mA * current_mA + calibration.read_bar_offset;
+}
+
+float flowPressureToCurrent(float flow_lps, float tank_pressure_bar) {
+  // Function to convert a desired flow rate at a given tank pressure to the
+  // corresponding current for the proportional valve
+  // TODO: Implement
+  return 20.0; // Placeholder value, replace with actual conversion logic
 }
 
 // ============================================================================
@@ -384,15 +391,16 @@ struct __attribute__((__packed__)) DatasetHeader {
 
 struct __attribute__((__packed__)) DatasetRow {
   uint32_t time_ms;
-  float value_mA;
+  float req_flow_lps;
   uint8_t enable;
   uint8_t trigger;
 };
 
 const uint32_t DATASET_MAGIC = 0x54434D46; // "TCMF"
 // Bump when DatasetHeader/DatasetRow layout changes.
-// Current version (2) adds the trigger column to each row.
-const uint8_t DATASET_FORMAT_VERSION = 2;
+// Version 2 adds the trigger column to each row, v3 switches to use flow rate
+// instead of current
+const uint8_t DATASET_FORMAT_VERSION = 3;
 
 bool saveDatasetToFlash() {
   if (dataIndex <= 0) {
@@ -420,7 +428,7 @@ bool saveDatasetToFlash() {
   }
 
   for (int i = 0; i < dataIndex; i++) {
-    DatasetRow row{time_array[i], value_array[i], sol_enable_array[i],
+    DatasetRow row{time_array[i], flow_lps_array[i], sol_enable_array[i],
                    trig_enable_array[i]};
     if (file.write(reinterpret_cast<const uint8_t *>(&row), sizeof(row)) !=
         sizeof(row)) {
@@ -478,7 +486,7 @@ bool loadDatasetFromFlash() {
       return false;
     }
     time_array[i] = row.time_ms;
-    value_array[i] = row.value_mA;
+    flow_lps_array[i] = row.req_flow_lps;
     sol_enable_array[i] = row.enable;
     trig_enable_array[i] = row.trigger;
   }
@@ -538,10 +546,11 @@ void saveToFlash() {
     file.printf("trigger_t0_us,%lu\n",
                 static_cast<unsigned long>(runLogTriggerUs));
     // file.println("us,v1 action,v2 set mA,bar"); // Header
-    file.println("time_us,sol_valve_action,prop_valve_ma,press_bar"); // Header
+    file.println("time_us,sol_valve_action,req_flow_lps,prop_valve_ma,press_"
+                 "bar"); // Header
     for (int i = 0; i < currentCount; i++) {
       file.printf("%lu,%d,%.2f,%.2f\n", logs[i].timestamp, logs[i].valve1,
-                  logs[i].valve2_mA, logs[i].pressure);
+                  logs[i].req_flow, logs[i].valve2, logs[i].pressure);
     }
     file.close();
     Serial.println("SAVED_TO_FLASH");
@@ -688,7 +697,7 @@ void openSolValve() {
       (1 << g_APinDescription[PIN_VALVE].ulPin);
 
   recordEvent(
-      1, -1,
+      1, -1, -1,
       pressureCurrentToBar(tank_RClick.get_EMA_mA(), TANK_PRESS_CALIBRATION));
   // Log valve open event
 }
@@ -707,7 +716,7 @@ void closeSolValve() {
       (1 << g_APinDescription[PIN_VALVE].ulPin);
 
   recordEvent(
-      0, -1,
+      0, -1, -1,
       pressureCurrentToBar(tank_RClick.get_EMA_mA(), TANK_PRESS_CALIBRATION));
   // Log valve close event
 
@@ -813,7 +822,7 @@ float readPhotodetector() {
 void resetDataArrays() {
   // Clear all flow curve dataset buffers and indices
   memset(time_array, 0, sizeof(time_array));
-  memset(value_array, 0, sizeof(value_array));
+  memset(flow_lps_array, 0, sizeof(flow_lps_array));
   memset(sol_enable_array, 0, sizeof(sol_enable_array));
   memset(trig_enable_array, 0, sizeof(trig_enable_array));
   incomingCount = 0;
@@ -1221,9 +1230,17 @@ void loop() {
       uint8_t enable = sol_enable_array[sequenceIndex];
       uint8_t trigger = trig_enable_array[sequenceIndex];
 
-      // Proportional valve follows mA column regardless of solenoid enable
-      valve.set_mA(value_array[sequenceIndex]);
-      recordEvent(-1, value_array[sequenceIndex],
+      // Get tank pressure from R-click
+      float tankPressure_bar = pressureCurrentToBar(tank_RClick.get_EMA_mA(),
+                                                    TANK_PRESS_CALIBRATION);
+
+      // Convert to current
+      float current = flowPressureToCurrent(flow_lps_array[sequenceIndex],
+                                            tankPressure_bar);
+
+      // Proportional valve follows calculated current
+      valve.set_mA(current);
+      recordEvent(-1, flow_lps_array[sequenceIndex], current,
                   pressureCurrentToBar(tank_RClick.get_EMA_mA(),
                                        TANK_PRESS_CALIBRATION));
 
@@ -1563,8 +1580,8 @@ void loop() {
       DEBUG_PRINTLN("X!      - X + clear persisted state and dataset");
       DEBUG_PRINTLN("[Flow curve dataset Handling]");
       DEBUG_PRINTLN("L <N> <duration_ms> <csv> - Load flow curve. CSV format: "
-                    "<ms0>,<mA0>,<e0>,<t0>,<ms1>,<mA1>,<e1>,<t1>,...,<msN>,<"
-                    "mAN>,<eN>,<tN>");
+                    "<ms0>,<Q0>,<e0>,<t0>,<ms1>,<Q1>,<e1>,<t1>,...,<msN>,<"
+                    "QN>,<eN>,<tN>");
       DEBUG_PRINTLN("         where e=solenoid enable (0/1), t=trigger event "
                     "(0/1), and trigger pulse width is fixed in firmware");
       DEBUG_PRINTLN("L?      - Show loaded flow curve status");
@@ -1810,8 +1827,9 @@ void loop() {
 
     case CommandId::LoadDataset: {
       // Parse incoming dataset. Command: "L <N_datapoints>
-      // <Time0>,<mA0>,<E0>,<T0>,<Time1>,<mA1>,<E1>,<T1>,...,<TimeN>,<mAN>,<EN>,<TN>"
+      // <Time0>,<Q0>,<E0>,<T0>,<Time1>,<Q1>,<E1>,<T1>,...,<TimeN>,<QN>,<EN>,<TN>"
       // where E is 0/1 solenoid enable and T is 0/1 trigger event.
+      // TODO: Change comments to flow rate
 
       setLedColor(COLOR_RECEIVING);
 
@@ -1859,9 +1877,9 @@ void loop() {
         // array
         time_array[i] = atoi(idx);
 
-        idx = strtok(
-            NULL,
-            delim); // Get next csv buffer index. This item is the mA value
+        idx = strtok(NULL,
+                     delim); // Get next csv buffer index. This item is the flow
+                             // rate value
         // Check again if item is not NULL
         if (idx == NULL) {
           printError("Token was NULL, breaking CSV parsing. Upload new "
@@ -1872,7 +1890,7 @@ void loop() {
         }
         // Convert incoming csv buffer index from string to float and add to
         // value array
-        value_array[i] = parseFloatInString(idx, 0);
+        flow_lps_array[i] = parseFloatInString(idx, 0);
 
         idx = strtok(NULL, delim); // Get next csv buffer index: enable flag
         if (idx == NULL) {
@@ -1926,8 +1944,8 @@ void loop() {
         // Debug print whole received dataset
         DEBUG_PRINT("Timestamp: ");
         DEBUG_PRINT(time_array[i]);
-        DEBUG_PRINT(", mA: ");
-        DEBUG_PRINT(value_array[i]);
+        DEBUG_PRINT(", L/s: ");
+        DEBUG_PRINT(flow_lps_array[i]);
         DEBUG_PRINT(", enable: ");
         DEBUG_PRINT(sol_enable_array[i]);
         DEBUG_PRINT(", trigger: ");
