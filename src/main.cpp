@@ -70,9 +70,10 @@ const int PIN_VALVE = 7;           // MOSFET gate pin for solenoid valve control
 const int PIN_PROP_VALVE = 11;     // Chip select for proportional valve
 const int PIN_TANK_CS_TCLICK = 10; // Chip select for tank pressure regulator
 const int PIN_TANK_CS_RCLICK = 2;  // Chip select for tank pressure sensor (SPI)
-const int PIN_NEB_CS_TCLICK = 4; // Chip select for nebuliser pressure regulator
+const int PIN_NEB_CS_TCLICK =
+    13; // Chip select for nebuliser pressure regulator
 const int PIN_NEB_CS_RCLICK =
-    13;                 // Chip select for nebuliser pressure sensor (SPI)
+    4;                  // Chip select for nebuliser pressure sensor (SPI)
 const int PIN_TRIG = 9; // Trigger output for peripheral devices synchronization
 const int PIN_LASER = 12; // Laser MOSFET gate pin for droplet detection
 const int PIN_LIGHT = 5;  // Light output pin (PWM brightness)
@@ -1063,6 +1064,8 @@ void loop() {
     // Centralized teardown for all active operation modes.
     // Used before mode switches and by emergency/stop commands.
 
+    // TODO: ALso stop nebuliser
+
     // Ensure trigger pulse is not left active.
     if (performingTrigger) {
       stopTrigger();
@@ -1516,7 +1519,7 @@ void loop() {
     CommandId commandId = classifyCommand(command);
     switch (commandId) {
     case CommandId::IdQuery:
-      Serial.println("TCM_control");
+      Serial.println("NEB_control");
       break;
 
     case CommandId::ProtocolVersionQuery:
