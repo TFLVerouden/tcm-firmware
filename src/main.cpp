@@ -128,7 +128,7 @@ struct __attribute__((__packed__)) LogEntry {
 };
 
 // INITIALIZE LOGGING ARRAY IN RAM
-#define MAX_RECORDS 2000
+#define MAX_RECORDS 2048
 LogEntry logs[MAX_RECORDS];
 int currentCount = 0;
 bool runLogActive = false;      // True only while a dataset run is active
@@ -305,6 +305,7 @@ float flowPressureToCurrent(float flow_lps, float tank_pressure_bar) {
   // Function to convert a desired flow rate at a given tank pressure to the
   // corresponding current for the proportional valve
   // TODO: Implement
+  // TODO: Clamp values to the valid range of the proportional valve
   return 20.0; // Placeholder value, replace with actual conversion logic
 }
 
@@ -549,7 +550,7 @@ void saveToFlash() {
     file.println("time_us,sol_valve_action,req_flow_lps,prop_valve_ma,press_"
                  "bar"); // Header
     for (int i = 0; i < currentCount; i++) {
-      file.printf("%lu,%d,%.2f,%.2f\n", logs[i].timestamp, logs[i].valve1,
+      file.printf("%lu,%d,%.1f,%.2f,%.2f\n", logs[i].timestamp, logs[i].valve1,
                   logs[i].req_flow, logs[i].valve2, logs[i].pressure);
     }
     file.close();
@@ -1240,9 +1241,7 @@ void loop() {
 
       // Proportional valve follows calculated current
       valve.set_mA(current);
-      recordEvent(-1, flow_lps_array[sequenceIndex], current,
-                  pressureCurrentToBar(tank_RClick.get_EMA_mA(),
-                                       TANK_PRESS_CALIBRATION));
+      recordEvent(-1, flow_lps_array[sequenceIndex], current, tankPressure_bar);
 
       // Solenoid enable controls only the solenoid valve state
       if (enable && !solValveOpen) {
@@ -1580,8 +1579,8 @@ void loop() {
       DEBUG_PRINTLN("X!      - X + clear persisted state and dataset");
       DEBUG_PRINTLN("[Flow curve dataset Handling]");
       DEBUG_PRINTLN("L <N> <duration_ms> <csv> - Load flow curve. CSV format: "
-                    "<ms0>,<Q0>,<e0>,<t0>,<ms1>,<Q1>,<e1>,<t1>,...,<msN>,<"
-                    "QN>,<eN>,<tN>");
+                    "<ms0>,<Lps0>,<e0>,<t0>,<ms1>,<Lps1>,<e1>,<t1>,...,<msN>,<"
+                    "LpsN>,<eN>,<tN>");
       DEBUG_PRINTLN("         where e=solenoid enable (0/1), t=trigger event "
                     "(0/1), and trigger pulse width is fixed in firmware");
       DEBUG_PRINTLN("L?      - Show loaded flow curve status");
@@ -1827,7 +1826,7 @@ void loop() {
 
     case CommandId::LoadDataset: {
       // Parse incoming dataset. Command: "L <N_datapoints>
-      // <Time0>,<Q0>,<E0>,<T0>,<Time1>,<Q1>,<E1>,<T1>,...,<TimeN>,<QN>,<EN>,<TN>"
+      // <Time0>,<Lps0>,<E0>,<T0>,<Time1>,<Lps1>,<E1>,<T1>,...,<TimeN>,<LpsN>,<EN>,<TN>"
       // where E is 0/1 solenoid enable and T is 0/1 trigger event.
       // TODO: Change comments to flow rate
 
