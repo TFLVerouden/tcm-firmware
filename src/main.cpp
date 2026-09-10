@@ -97,6 +97,14 @@ uint8_t trig_enable_array[MAX_DATA_LENGTH]; // 0/1: trigger pulse event
 // Create DvG_StreamCommand object on Serial stream
 DvG_StreamCommand sc(Serial, cmd_buf, CMD_BUF_LEN);
 
+// Fitting values for flow to current conversion
+const float FRPTC_Ic = 12.487842f;
+const float FRPTC_K = 1.974649f;
+const float FRPTC_n = 2.194872f;
+const float FRPTC_A = 5.151685f;
+const float FRPTC_B = 0.757483f;
+const float FRPTC_C = 0.715242f;
+
 // ============================================================================
 // FLOW-CURVE EXECUTION RUNTIME STATE
 // ============================================================================
@@ -301,12 +309,36 @@ float pressureCurrentToBar(float current_mA,
   return calibration.read_bar_per_mA * current_mA + calibration.read_bar_offset;
 }
 
-float flowPressureToCurrent(float flow_lps, float tank_pressure_bar) {
+float calculateCurrent(float flow_rate_lps, float tank_pressure_bar) {
   // Function to convert a desired flow rate at a given tank pressure to the
   // corresponding current for the proportional valve
-  // TODO: Implement
-  // TODO: Clamp values to the valid range of the proportional valve
-  return 20.0; // Placeholder value, replace with actual conversion logic
+
+  // Clamp negative flow to minimum current
+  if (flow_rate_lps < 0.0) {
+    return min_mA_valve;
+  }
+
+  // Calculate maximum flow rate at the given tank pressure
+  const float max_flow_rate_lps =
+      FRPTC_A * powf(tank_pressure_bar, FRPTC_B) + FRPTC_C;
+
+  // Clamp excessive flow to maximum current
+  if (flow_rate_lps > max_flow_rate_lps) {
+    return max_mA;
+  }
+
+  // Calculate current using the Hill function model
+  float current_mA =
+      FRPTC_Ic +
+      FRPTC_K * powf(flow_rate_lps / (max_flow_rate_lps - flow_rate_lps),
+                     1.0f / FRPTC_n);
+
+  // Clamp current to minimum and maximum values
+  if (current_mA > max_mA)
+    return max_mA;
+  if (current_mA < min_mA_valve)
+    return min_mA_valve;
+  return current_mA;
 }
 
 // ============================================================================
@@ -1236,8 +1268,8 @@ void loop() {
                                                     TANK_PRESS_CALIBRATION);
 
       // Convert to current
-      float current = flowPressureToCurrent(flow_lps_array[sequenceIndex],
-                                            tankPressure_bar);
+      float current =
+          calculateCurrent(flow_lps_array[sequenceIndex], tankPressure_bar);
 
       // Proportional valve follows calculated current
       valve.set_mA(current);
