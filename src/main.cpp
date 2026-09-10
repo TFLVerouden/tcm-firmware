@@ -313,8 +313,8 @@ float calculateCurrent(float flow_rate_lps, float tank_pressure_bar) {
   // Function to convert a desired flow rate at a given tank pressure to the
   // corresponding current for the proportional valve
 
-  // Clamp negative flow to minimum current
-  if (flow_rate_lps < 0.0) {
+  // Clamp negative or zero flow to minimum current
+  if (flow_rate_lps < 0.1) {
     return min_mA_valve;
   }
 
