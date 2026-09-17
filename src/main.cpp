@@ -99,12 +99,15 @@ uint8_t trig_enable_array[MAX_DATA_LENGTH]; // 0/1: trigger pulse event
 DvG_StreamCommand sc(Serial, cmd_buf, CMD_BUF_LEN);
 
 // Fitting values for flow to current conversion
-const float FRPTC_Ic = 12.487842f;
-const float FRPTC_K = 1.974649f;
-const float FRPTC_n = 2.194872f;
-const float FRPTC_A = 5.151685f;
-const float FRPTC_B = 0.757483f;
-const float FRPTC_C = 0.715242f;
+const float FRPTC_Ic = 12.48784241f; // minimum current/offset in Hill fit (mA)
+const float FRPTC_K = 1.97464874f;   // Hill fit inflection current (mA)
+const float FRPTC_n = 2.19487228f;   // Hill fit coefficient (1)
+const float FRPTC_A =
+    5.15168523f; // Max flow rate vs pressure fit amplitude (L/s/bar^n)
+const float FRPTC_B = 0.75748279f; // Max flow rate vs pressure fit offset (L/s)
+const float FRPTC_C = 0.71524210f; // Max flow rate vs pressure fit exponent (1)
+const float FRPTC_a = -0.00341232f; // Flat profile correction ratio slope (s/L)
+const float FRPTC_b = 0.94534592f;  // Flat profile correction ratio offset (1)
 
 // ============================================================================
 // FLOW-CURVE EXECUTION RUNTIME STATE
@@ -313,6 +316,13 @@ float pressureCurrentToBar(float current_mA,
 float calculateCurrent(float flow_rate_lps, float tank_pressure_bar) {
   // Function to convert a desired flow rate at a given tank pressure to the
   // corresponding current for the proportional valve
+
+  // First convert flow rate to flat flow rate (because the fit was done under
+  // the assumption that the velocity profile is constant in the vertical
+  // direction)
+  flow_rate_lps =
+      (-FRPTC_b + sqrtf(FRPTC_b * FRPTC_b + 4 * FRPTC_a * flow_rate_lps)) /
+      (2 * FRPTC_a);
 
   // Clamp negative or zero flow to minimum current
   if (flow_rate_lps < 0.1) {
