@@ -1529,7 +1529,7 @@ void loop() {
     CommandId commandId = classifyCommand(command);
     switch (commandId) {
     case CommandId::IdQuery:
-      Serial.println("NEB_control");
+      Serial.println("TCM_control");
       break;
 
     case CommandId::ProtocolVersionQuery:
