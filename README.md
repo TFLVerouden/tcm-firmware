@@ -21,7 +21,7 @@ See also the [Twente Cough Machine hardware documentation](https://github.com/TF
 | Nebuliser enable | A5 |
 | Photodetector input | A2 |
 
-All controlled outputs start LOW at boot. The tank pressure regulator restores its last valid saved setting from QSPI flash; when no valid setting is available, it uses the firmware default of 4.0 mA. Pressure conversion and sensor calibration constants are defined in [src/main.cpp](src/main.cpp).
+All controlled outputs except the LED driver start LOW at boot. The tank pressure regulator restores its last valid saved setting from QSPI flash; when no valid setting is available, it uses the firmware default of 4.0 mA. Pressure conversion and sensor calibration constants are defined in [src/main.cpp](src/main.cpp).
 
 ## Build & upload
 

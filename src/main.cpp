@@ -656,7 +656,7 @@ void setup() {
   digitalWrite(PIN_VALVE, LOW);
   digitalWrite(PIN_TRIG, LOW);
   digitalWrite(PIN_LASER, LOW);
-  digitalWrite(PIN_LIGHT, LOW);
+  digitalWrite(PIN_LIGHT, HIGH);
   digitalWrite(PIN_FAN, LOW);
   digitalWrite(PIN_NEB, LOW);
 
@@ -1839,7 +1839,8 @@ void loop() {
         return;
       }
 
-      uint8_t duty = (uint8_t)(normalized * 255.0 + 0.5);
+      uint8_t duty =
+          (uint8_t)(255.0 - normalized * 255.0); // Inverted PWM for LED
       analogWrite(PIN_LIGHT, duty);
 
       Serial.print("SET_LIGHT ");
