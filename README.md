@@ -13,12 +13,12 @@ See also the [Twente Cough Machine hardware documentation](https://github.com/TF
 | Tank pressure regulator T-Click chip select | 10 |
 | Nebuliser pressure regulator T-Click chip select | 4 |
 | Tank pressure sensor R-Click chip select | 2 |
-| Nebuliser pressure sensor R-Click chip select | 13 |
+| Nebuliser pressure sensor R-Click chip select | 5 |
 | Trigger output | 9 |
 | Laser MOSFET gate | 12 |
-| Light PWM output | 5 |
+| Light PWM output | 13 |
 | Fan PWM output | 3 |
-| Nebuliser enable | A3 |
+| Nebuliser enable | A5 |
 | Photodetector input | A2 |
 
 All controlled outputs start LOW at boot. The tank pressure regulator restores its last valid saved setting from QSPI flash; when no valid setting is available, it uses the firmware default of 4.0 mA. Pressure conversion and sensor calibration constants are defined in [src/main.cpp](src/main.cpp).

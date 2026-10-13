@@ -70,15 +70,14 @@ const int PIN_VALVE = 7;           // MOSFET gate pin for solenoid valve control
 const int PIN_PROP_VALVE = 11;     // Chip select for proportional valve
 const int PIN_TANK_CS_TCLICK = 10; // Chip select for tank pressure regulator
 const int PIN_TANK_CS_RCLICK = 2;  // Chip select for tank pressure sensor (SPI)
-const int PIN_NEB_CS_TCLICK =
-    13; // Chip select for nebuliser pressure regulator
+const int PIN_NEB_CS_TCLICK = 4; // Chip select for nebuliser pressure regulator
 const int PIN_NEB_CS_RCLICK =
-    4;                  // Chip select for nebuliser pressure sensor (SPI)
+    5;                  // Chip select for nebuliser pressure sensor (SPI)
 const int PIN_TRIG = 9; // Trigger output for peripheral devices synchronization
 const int PIN_LASER = 12; // Laser MOSFET gate pin for droplet detection
-const int PIN_LIGHT = 5;  // Light output pin (PWM brightness)
+const int PIN_LIGHT = 13; // Light output pin (PWM brightness)
 const int PIN_FAN = 3;    // Fan speed control pin (PWM, not yet implemented)
-const int PIN_NEB = A3;   // Nebuliser control pin (digital)
+const int PIN_NEB = A5;   // Nebuliser control pin (digital)
 const int PIN_PDA = A2;   // Analog input from photodetector
 // Note: PIN_DOTSTAR_DATA and PIN_DOTSTAR_CLK are already defined in variant.h
 
