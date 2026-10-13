@@ -52,10 +52,10 @@ The firmware responds on the same serial connection. Enable debug output with `B
 | `M <bar>` | Set nebuliser pressure regulator target in bar. | `SET_NEB_PRESSURE <bar>` |
 | `O` | Open the solenoid valve. | `SOLENOID_OPENED` |
 | `C` | Close the solenoid valve. | `SOLENOID_CLOSED` |
-| `I <level>` | Set light output on pin 5 with normalized PWM from `0.0` to `1.0`. | `SET_LIGHT <level> DUTY <0-255>` |
+| `I <level>` | Set light output on pin 5 with normalized PWM from `0.0` to `1.0`. | `SET_LIGHT <level> DUTY <255-0>` |
 | `G` | Send one trigger pulse with the firmware-defined width. | `TRIGGER_PULSE_SENT` |
 | `A <0\|1>` | Disable or enable laser test mode; enabled mode streams photodiode readings. | `LASER_TEST_OFF` or `LASER_TEST_ON` |
-| `F <val>` | Set fan speed on pin 3. The hardware implementation is currently a placeholder. | `FAN_SPEED_SET` |
+| `F <val>` | Set fan speed on pin 3 on (>0.0 - 1.0) or off (0.0) ~~with normalized PWM from `0.0` to `1.0`.~~ | `SET_FAN <level>` ~~DUTY <0-255>~~ |
 | `N <0\|1>` | Disable or enable the nebuliser on pin A3. | `NEBULISER_OFF` or `NEBULISER_ON` |
 | `Q` | Quit active modes and return to idle. | `RETURNED_TO_IDLE` |
 

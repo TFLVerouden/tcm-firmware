@@ -76,7 +76,7 @@ const int PIN_NEB_CS_RCLICK =
 const int PIN_TRIG = 9; // Trigger output for peripheral devices synchronization
 const int PIN_LASER = 12; // Laser MOSFET gate pin for droplet detection
 const int PIN_LIGHT = 13; // Light output pin (PWM brightness)
-const int PIN_FAN = 3;    // Fan speed control pin (PWM, not yet implemented)
+const int PIN_FAN = 3;    // Fan speed control pin (PWM)
 const int PIN_NEB = A5;   // Nebuliser control pin (digital)
 const int PIN_PDA = A2;   // Analog input from photodetector
 // Note: PIN_DOTSTAR_DATA and PIN_DOTSTAR_CLK are already defined in variant.h
@@ -1717,6 +1717,8 @@ void loop() {
         printError("Nebuliser pressure input out of range!");
       } else {
         neb_pressure.set_mA(current);
+        DEBUG_PRINT("Last set bitvalue of pressure regulator: ");
+        DEBUG_PRINTLN(neb_pressure.get_last_set_bitval());
         Serial.print("SET_NEB_PRESSURE ");
         Serial.println(bar, 2);
       }
@@ -1791,10 +1793,44 @@ void loop() {
     }
 
     case CommandId::FanSpeed: {
-      // TODO: Implement fan speed control on PIN_FAN (pin 3).
-      // Hardware not yet finalised — likely PWM.
-      // Placeholder: accepts a speed value but does nothing.
-      Serial.println("FAN_SPEED_SET");
+      // Command: F <level>
+      // level is normalized PWM duty in [0.0, 1.0].
+      char *valueStart = command + 1;
+      while (*valueStart == ' ') {
+        valueStart++;
+      }
+
+      if (*valueStart == '\0') {
+        printError("F expects a value in [0.0, 1.0]!");
+        return;
+      }
+
+      char *endPtr = nullptr;
+      double normalized = strtod(valueStart, &endPtr);
+      while (*endPtr == ' ') {
+        endPtr++;
+      }
+
+      if (endPtr == valueStart || *endPtr != '\0') {
+        printError("F expects a numeric value in [0.0, 1.0]!");
+        return;
+      }
+
+      if (normalized < 0.0 || normalized > 1.0) {
+        printError("Fan speed out of range! Use 0.0 to 1.0.");
+        return;
+      }
+
+      // uint8_t duty = (uint8_t)(normalized * 255.0); // Non-inverted PWM for
+      // LED analogWrite(PIN_FAN, duty); Temp: fan cannot be PWM-ed because it
+      // is on pin 3, the only non-PWM
+      digitalWrite(PIN_FAN, normalized > 0.0 ? HIGH : LOW);
+
+      Serial.print("SET_FAN ");
+      Serial.print((float)normalized, 3);
+      Serial.println();
+      // Serial.print(" DUTY ");
+      // Serial.println((int)duty);
       break;
     }
 
