@@ -76,7 +76,7 @@ const int PIN_NEB_CS_RCLICK =
 const int PIN_TRIG = 9; // Trigger output for peripheral devices synchronization
 const int PIN_LASER = 12; // Laser MOSFET gate pin for droplet detection
 const int PIN_LIGHT = 13; // Light output pin (PWM brightness)
-const int PIN_FAN = 3;    // Fan speed control pin (PWM)
+const int PIN_FAN = A4;   // Fan speed control pin (PWM)
 const int PIN_NEB = A5;   // Nebuliser control pin (digital)
 const int PIN_PDA = A2;   // Analog input from photodetector
 // Note: PIN_DOTSTAR_DATA and PIN_DOTSTAR_CLK are already defined in variant.h
@@ -657,7 +657,7 @@ void setup() {
   digitalWrite(PIN_TRIG, LOW);
   digitalWrite(PIN_LASER, LOW);
   digitalWrite(PIN_LIGHT, HIGH);
-  digitalWrite(PIN_FAN, LOW);
+  analogWrite(PIN_FAN, 127); // TODO: Fan speed initialises in python
   digitalWrite(PIN_NEB, LOW);
 
   // Initialize T Clicks (proportional valve and pressure regulator)
@@ -665,6 +665,8 @@ void setup() {
   valve.set_mA(default_valve);
 
   pressure.begin();
+  neb_pressure.begin();
+  neb_pressure.set_mA(default_pressure);
 
   // Initialize DotStar LED
   led.begin();
@@ -1073,8 +1075,6 @@ void loop() {
     // Centralized teardown for all active operation modes.
     // Used before mode switches and by emergency/stop commands.
 
-    // TODO: ALso stop nebuliser
-
     // Ensure trigger pulse is not left active.
     if (performingTrigger) {
       stopTrigger();
@@ -1087,6 +1087,10 @@ void loop() {
       solValveOpen = false;
     }
     valve.set_mA(default_valve);
+
+    // Nebuliser pressure to zero and nebulisers off
+    neb_pressure.set_mA(default_pressure);
+    digitalWrite(PIN_NEB, LOW);
 
     // Stop any active run/detection/test modes.
     if (mode == LoopMode::DropletDetect || mode == LoopMode::LaserTest) {
@@ -1821,16 +1825,15 @@ void loop() {
         return;
       }
 
-      // uint8_t duty = (uint8_t)(normalized * 255.0); // Non-inverted PWM for
-      // LED analogWrite(PIN_FAN, duty); Temp: fan cannot be PWM-ed because it
-      // is on pin 3, the only non-PWM
-      digitalWrite(PIN_FAN, normalized > 0.0 ? HIGH : LOW);
+      uint8_t duty = (uint8_t)(normalized * 255.0); // Non-inverted PWM for
+      // LED
+      analogWrite(PIN_FAN, duty);
+      // digitalWrite(PIN_FAN, normalized > 0.0 ? HIGH : LOW);
 
       Serial.print("SET_FAN ");
       Serial.print((float)normalized, 3);
-      Serial.println();
-      // Serial.print(" DUTY ");
-      // Serial.println((int)duty);
+      Serial.print(" DUTY ");
+      Serial.println((int)duty);
       break;
     }
 
