@@ -181,7 +181,8 @@ struct PressureCalibration {
 };
 
 const PressureCalibration TANK_PRESS_CALIBRATION{
-    0.62242857f, 2.48821429f, 0.6255112463192659f, -2.534598501736508f};
+    0.62242857f, 2.48821429f, 0.6162434896754777f,
+    -2.5243323778850035f}; // EDIT THESE
 
 // TODO: Replace with calibration values for the nebuliser pressure loop.
 const PressureCalibration NEB_PRESS_CALIBRATION{
