@@ -24,3 +24,4 @@ Thumbs.db
 
 # PlatformIO
 .pio
+.vscode/settings.json
