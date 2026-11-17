@@ -204,12 +204,12 @@ const float EMA_LP_FREQ = 500.;   // Low-pass filter cutoff frequency [Hz]
 
 // Initialize with calibration values: p1_mA, p2_mA, p1_bitval, p2_bitval
 R_Click tank_RClick(PIN_TANK_CS_RCLICK,
-                    RT_Click_Calibration{4.04, 10.98, 806, 2191}, EMA_INTERVAL,
+                    RT_Click_Calibration{4.20, 13.65, 825, 2707}, EMA_INTERVAL,
                     EMA_LP_FREQ);
 
 // TODO: Replace with calibration values for the nebuliser R-Click.
 R_Click neb_RClick(PIN_NEB_CS_RCLICK,
-                   RT_Click_Calibration{4.04, 10.98, 806, 2191}, EMA_INTERVAL,
+                   RT_Click_Calibration{4.20, 13.64, 848, 2735}, EMA_INTERVAL,
                    EMA_LP_FREQ);
 
 // Temperature & humidity sensor (SHT4x I2C)
@@ -225,13 +225,11 @@ const float PDA_MIN_VALID = 0.1; // Minimum valid signal [V] (detect PSU off)
 // T CLICK CONFIGURATION (proportional valve and pressure regulator)
 // ============================================================================
 // Proportional valve and pressure regulator interfaces
-T_Click valve(PIN_PROP_VALVE, RT_Click_Calibration{3.97, 19.90, 796, 3982});
+T_Click valve(PIN_PROP_VALVE, RT_Click_Calibration{12.01, 20.02, 2402, 4002});
 T_Click pressure(PIN_TANK_CS_TCLICK,
-                 RT_Click_Calibration{3.97, 19.90, 796, 3982});
-
-// TODO: Replace with calibration values for the nebuliser T-Click.
+                 RT_Click_Calibration{4.16, 13.64, 834, 2729});
 T_Click neb_pressure(PIN_NEB_CS_TCLICK,
-                     RT_Click_Calibration{3.97, 19.90, 796, 3982});
+                     RT_Click_Calibration{4.17, 13.65, 834, 2729});
 
 // Define default T Click values
 const float max_mA = 20.0;
