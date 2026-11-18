@@ -181,12 +181,9 @@ struct PressureCalibration {
 };
 
 const PressureCalibration TANK_PRESS_CALIBRATION{
-    0.62242857f, 2.48821429f, 0.6162434896754777f,
-    -2.5243323778850035f}; // EDIT THESE
-
-// TODO: Replace with calibration values for the nebuliser pressure loop.
+    0.625f, -2.5f, 0.623412010370172f, -2.5107257081374943f};
 const PressureCalibration NEB_PRESS_CALIBRATION{
-    0.62242857f, 2.48821429f, 0.6255112463192659f, -2.534598501736508f};
+    0.625f, -2.5f, 0.620261308248462f, -2.4945591853511235f};
 
 // ============================================================================
 // PERSISTENCE FILE KEYS + SESSION TRACKING
@@ -303,7 +300,7 @@ void recordEvent(int8_t v1, float f, float v2, float press) {
 }
 
 float pressureBarToCurrent(float bar, const PressureCalibration &calibration) {
-  return (bar + calibration.set_bar_offset) / calibration.set_bar_per_mA;
+  return (bar - calibration.set_bar_offset) / calibration.set_bar_per_mA;
 }
 
 float pressureCurrentToBar(float current_mA,
