@@ -1104,6 +1104,9 @@ void loop() {
     if (setIdleLed) {
       setLedColor(COLOR_IDLE);
     }
+
+    // Set fan back to default speed (in case it was changed during a run)
+    analogWrite(PIN_FAN, 127);
   };
 
   /* ----------------------------------------------------------------------- */
