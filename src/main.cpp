@@ -142,7 +142,8 @@ struct __attribute__((__packed__)) LogEntry {
 #define MAX_RECORDS 2048
 LogEntry logs[MAX_RECORDS];
 int currentCount = 0;
-bool runLogActive = false;      // True only while a dataset run is active
+bool runLogActive = false; // True only while a dataset run is active
+bool saveRunLogToFlash = true;
 uint32_t runLogTriggerUs = 0;   // First trigger timestamp for current run [us]
 bool runLogTriggerSeen = false; // True once the run-local trigger has fired
 uint32_t runCounter = 0;        // Per-session run index (starts at 0 each boot)
@@ -562,6 +563,7 @@ void startRunSession() {
   runCounter = 0;
   lastSavedFilename[0] = '\0';
   lastSessionCount = 0;
+  saveRunLogToFlash = true;
   savePersistentState();
 }
 
@@ -1323,9 +1325,14 @@ void loop() {
       sequenceIndex = 0;
       setLedColor(COLOR_OFF);
       Serial.println("FINISHED");
-      // Persist and stream the log for this run
-      saveToFlash();
-      dumpToSerial();
+      if (saveRunLogToFlash) {
+        saveToFlash();
+        dumpToSerial();
+      } else {
+        endRunLog();
+        currentCount = 0;
+      }
+      saveRunLogToFlash = true;
 
       // If in multi-run mode, re-arm detection for the next droplet
       if (dropletRunsRemaining != 0) {
@@ -1414,6 +1421,7 @@ void loop() {
       LoadDataset,
       DatasetStatus,
       Run,
+      RunTest,
       DropletRun,
       DropletDetect,
       Other
@@ -1441,6 +1449,8 @@ void loop() {
         return CommandId::DatasetStatus;
       if (strncmp(cmd, "D!", 2) == 0)
         return CommandId::DropletRun;
+      if (strncmp(cmd, "R*", 2) == 0)
+        return CommandId::RunTest;
       if (strncmp(cmd, "B", 1) == 0)
         return CommandId::DebugToggle;
       if (strncmp(cmd, "V", 1) == 0)
@@ -1633,6 +1643,8 @@ void loop() {
       DEBUG_PRINTLN("L?      - Show loaded flow curve status");
       DEBUG_PRINTLN("[Cough]");
       DEBUG_PRINTLN("R       - Run the loaded flow curve dataset");
+      DEBUG_PRINTLN("R*      - Run the loaded flow curve without saving or "
+                    "streaming its log");
       DEBUG_PRINTLN("D       - Droplet-detect only (cont.)");
       DEBUG_PRINTLN("D <n>   - Droplet-detect only n times then stop");
       DEBUG_PRINTLN("D!      - Droplet-detect then run flow curve (cont.)");
@@ -2064,7 +2076,8 @@ void loop() {
       }
       break;
 
-    case CommandId::Run: {
+    case CommandId::Run:
+    case CommandId::RunTest: {
       // Start a single run using the loaded dataset
       if (dataIndex == 0) {
         printError("Dataset is empty! Upload first using L command.");
@@ -2077,8 +2090,12 @@ void loop() {
         // Step 1: clear other active modes and reset mode flags/outputs.
         stopActiveModes(false);
 
-        // Step 2: start fresh run session (file/counter reset).
-        startRunSession();
+        // Step 2: only regular runs start a new persisted log session.
+        if (commandId == CommandId::RunTest) {
+          saveRunLogToFlash = false;
+        } else {
+          startRunSession();
+        }
 
         // Step 3: branch run mode based on pre-trigger delay setting.
         if (pre_trigger_delay_us > 0) {

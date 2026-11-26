@@ -88,6 +88,7 @@ The firmware responds on the same serial connection. Enable debug output with `B
 | Command | Description | Reply |
 | --- | --- | --- |
 | `R` | Run the loaded flow curve. | `STARTING_RUN`, `FINISHED`, and log-transfer markers |
+| `R*` | Run the loaded flow curve without saving or streaming its run log. | `STARTING_RUN`, `FINISHED` |
 | `D` | Arm continuous droplet detection only. | `DROPLET_ARMED`, then `DROPLET_DETECTED` |
 | `D <n>` | Detect `n` droplets, then stop. | `DROPLET_ARMED` |
 | `D!` | Continuously detect droplets and run the loaded flow curve after each detection. | `DROPLET_ARMED` |
