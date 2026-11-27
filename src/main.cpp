@@ -70,15 +70,14 @@ const int PIN_VALVE = 7;           // MOSFET gate pin for solenoid valve control
 const int PIN_PROP_VALVE = 11;     // Chip select for proportional valve
 const int PIN_TANK_CS_TCLICK = 10; // Chip select for tank pressure regulator
 const int PIN_TANK_CS_RCLICK = 2;  // Chip select for tank pressure sensor (SPI)
-const int PIN_NEB_CS_TCLICK =
-    13; // Chip select for nebuliser pressure regulator
+const int PIN_NEB_CS_TCLICK = 4; // Chip select for nebuliser pressure regulator
 const int PIN_NEB_CS_RCLICK =
-    4;                  // Chip select for nebuliser pressure sensor (SPI)
+    5;                  // Chip select for nebuliser pressure sensor (SPI)
 const int PIN_TRIG = 9; // Trigger output for peripheral devices synchronization
 const int PIN_LASER = 12; // Laser MOSFET gate pin for droplet detection
-const int PIN_LIGHT = 5;  // Light output pin (PWM brightness)
-const int PIN_FAN = 3;    // Fan speed control pin (PWM, not yet implemented)
-const int PIN_NEB = A3;   // Nebuliser control pin (digital)
+const int PIN_LIGHT = 13; // Light output pin (PWM brightness)
+const int PIN_FAN = A4;   // Fan speed control pin (PWM)
+const int PIN_NEB = A5;   // Nebuliser control pin (digital)
 const int PIN_PDA = A2;   // Analog input from photodetector
 // Note: PIN_DOTSTAR_DATA and PIN_DOTSTAR_CLK are already defined in variant.h
 
@@ -143,7 +142,8 @@ struct __attribute__((__packed__)) LogEntry {
 #define MAX_RECORDS 2048
 LogEntry logs[MAX_RECORDS];
 int currentCount = 0;
-bool runLogActive = false;      // True only while a dataset run is active
+bool runLogActive = false; // True only while a dataset run is active
+bool saveRunLogToFlash = true;
 uint32_t runLogTriggerUs = 0;   // First trigger timestamp for current run [us]
 bool runLogTriggerSeen = false; // True once the run-local trigger has fired
 uint32_t runCounter = 0;        // Per-session run index (starts at 0 each boot)
@@ -182,11 +182,9 @@ struct PressureCalibration {
 };
 
 const PressureCalibration TANK_PRESS_CALIBRATION{
-    0.62242857f, 2.48821429f, 0.6255112463192659f, -2.534598501736508f};
-
-// TODO: Replace with calibration values for the nebuliser pressure loop.
+    0.625f, -2.5f, 0.623412010370172f, -2.5107257081374943f};
 const PressureCalibration NEB_PRESS_CALIBRATION{
-    0.62242857f, 2.48821429f, 0.6255112463192659f, -2.534598501736508f};
+    0.625f, -2.5f, 0.620261308248462f, -2.4945591853511235f};
 
 // ============================================================================
 // PERSISTENCE FILE KEYS + SESSION TRACKING
@@ -204,12 +202,12 @@ const float EMA_LP_FREQ = 500.;   // Low-pass filter cutoff frequency [Hz]
 
 // Initialize with calibration values: p1_mA, p2_mA, p1_bitval, p2_bitval
 R_Click tank_RClick(PIN_TANK_CS_RCLICK,
-                    RT_Click_Calibration{4.04, 10.98, 806, 2191}, EMA_INTERVAL,
+                    RT_Click_Calibration{4.20, 13.65, 825, 2707}, EMA_INTERVAL,
                     EMA_LP_FREQ);
 
 // TODO: Replace with calibration values for the nebuliser R-Click.
 R_Click neb_RClick(PIN_NEB_CS_RCLICK,
-                   RT_Click_Calibration{4.04, 10.98, 806, 2191}, EMA_INTERVAL,
+                   RT_Click_Calibration{4.20, 13.64, 848, 2735}, EMA_INTERVAL,
                    EMA_LP_FREQ);
 
 // Temperature & humidity sensor (SHT4x I2C)
@@ -218,20 +216,18 @@ Adafruit_SHT4x sht4;
 // Photodetector configuration for droplet detection
 const float PDA_R1 = 6710.0;     // Voltage divider resistor [Ohm]
 const float PDA_R2 = 3260.0;     // Voltage divider resistor [Ohm]
-const float PDA_THR = 4.8;       // Droplet detection threshold [V]
+const float PDA_THR = 4.5;       // Droplet detection threshold [V]
 const float PDA_MIN_VALID = 0.1; // Minimum valid signal [V] (detect PSU off)
 
 // ============================================================================
 // T CLICK CONFIGURATION (proportional valve and pressure regulator)
 // ============================================================================
 // Proportional valve and pressure regulator interfaces
-T_Click valve(PIN_PROP_VALVE, RT_Click_Calibration{3.97, 19.90, 796, 3982});
+T_Click valve(PIN_PROP_VALVE, RT_Click_Calibration{12.01, 20.02, 2402, 4002});
 T_Click pressure(PIN_TANK_CS_TCLICK,
-                 RT_Click_Calibration{3.97, 19.90, 796, 3982});
-
-// TODO: Replace with calibration values for the nebuliser T-Click.
+                 RT_Click_Calibration{4.16, 13.64, 834, 2729});
 T_Click neb_pressure(PIN_NEB_CS_TCLICK,
-                     RT_Click_Calibration{3.97, 19.90, 796, 3982});
+                     RT_Click_Calibration{4.17, 13.65, 834, 2729});
 
 // Define default T Click values
 const float max_mA = 20.0;
@@ -305,7 +301,7 @@ void recordEvent(int8_t v1, float f, float v2, float press) {
 }
 
 float pressureBarToCurrent(float bar, const PressureCalibration &calibration) {
-  return (bar + calibration.set_bar_offset) / calibration.set_bar_per_mA;
+  return (bar - calibration.set_bar_offset) / calibration.set_bar_per_mA;
 }
 
 float pressureCurrentToBar(float current_mA,
@@ -567,6 +563,7 @@ void startRunSession() {
   runCounter = 0;
   lastSavedFilename[0] = '\0';
   lastSessionCount = 0;
+  saveRunLogToFlash = true;
   savePersistentState();
 }
 
@@ -657,8 +654,8 @@ void setup() {
   digitalWrite(PIN_VALVE, LOW);
   digitalWrite(PIN_TRIG, LOW);
   digitalWrite(PIN_LASER, LOW);
-  digitalWrite(PIN_LIGHT, LOW);
-  digitalWrite(PIN_FAN, LOW);
+  digitalWrite(PIN_LIGHT, HIGH);
+  analogWrite(PIN_FAN, 127); // TODO: Fan speed initialises in python
   digitalWrite(PIN_NEB, LOW);
 
   // Initialize T Clicks (proportional valve and pressure regulator)
@@ -666,6 +663,8 @@ void setup() {
   valve.set_mA(default_valve);
 
   pressure.begin();
+  neb_pressure.begin();
+  neb_pressure.set_mA(default_pressure);
 
   // Initialize DotStar LED
   led.begin();
@@ -1010,6 +1009,7 @@ void loop() {
   static LoopMode mode = LoopMode::Idle;
   static bool solValveOpen = false;      // Tracks if valve is currently open
   static bool performingTrigger = false; // Tracks if trigger pulse is active
+  static bool suppressRunTriggers = false;
   static bool belowThreshold = false;    // Tracks if signal is below threshold
   static bool detectionBaselineReady =
       false; // True after first valid post-delay sample is captured
@@ -1074,13 +1074,14 @@ void loop() {
     // Centralized teardown for all active operation modes.
     // Used before mode switches and by emergency/stop commands.
 
-    // TODO: ALso stop nebuliser
-
     // Ensure trigger pulse is not left active.
     if (performingTrigger) {
       stopTrigger();
       performingTrigger = false;
     }
+
+    // Turn off LED light
+    digitalWrite(PIN_LIGHT, HIGH);
 
     // Ensure solenoid and proportional valve return to safe defaults.
     if (solValveOpen) {
@@ -1088,6 +1089,10 @@ void loop() {
       solValveOpen = false;
     }
     valve.set_mA(default_valve);
+
+    // Nebuliser pressure to zero and nebulisers off
+    neb_pressure.set_mA(default_pressure);
+    digitalWrite(PIN_NEB, LOW);
 
     // Stop any active run/detection/test modes.
     if (mode == LoopMode::DropletDetect || mode == LoopMode::LaserTest) {
@@ -1099,12 +1104,16 @@ void loop() {
     sequenceIndex = 0;
     dropletRunsRemaining = 0;
     runAfterDropletDetection = false;
+    suppressRunTriggers = false;
     belowThreshold = false;
     detectionBaselineReady = false;
 
     if (setIdleLed) {
       setLedColor(COLOR_IDLE);
     }
+
+    // Set fan back to default speed (in case it was changed during a run)
+    analogWrite(PIN_FAN, 127);
   };
 
   /* ----------------------------------------------------------------------- */
@@ -1299,7 +1308,7 @@ void loop() {
       }
 
       // Trigger column controls trigger pulses independently of solenoid state
-      if (trigger) {
+      if (trigger && !suppressRunTriggers) {
         trigOut();
         markRunTrigger();
         performingTrigger = true;
@@ -1321,9 +1330,15 @@ void loop() {
       sequenceIndex = 0;
       setLedColor(COLOR_OFF);
       Serial.println("FINISHED");
-      // Persist and stream the log for this run
-      saveToFlash();
-      dumpToSerial();
+      if (saveRunLogToFlash) {
+        saveToFlash();
+        dumpToSerial();
+      } else {
+        endRunLog();
+        currentCount = 0;
+      }
+      saveRunLogToFlash = true;
+      suppressRunTriggers = false;
 
       // If in multi-run mode, re-arm detection for the next droplet
       if (dropletRunsRemaining != 0) {
@@ -1412,6 +1427,8 @@ void loop() {
       LoadDataset,
       DatasetStatus,
       Run,
+      RunUnlogged,
+      RunTriggerless,
       DropletRun,
       DropletDetect,
       Other
@@ -1439,6 +1456,10 @@ void loop() {
         return CommandId::DatasetStatus;
       if (strncmp(cmd, "D!", 2) == 0)
         return CommandId::DropletRun;
+      if (strncmp(cmd, "R*", 2) == 0)
+        return CommandId::RunUnlogged;
+      if (strncmp(cmd, "R-", 2) == 0)
+        return CommandId::RunTriggerless;
       if (strncmp(cmd, "B", 1) == 0)
         return CommandId::DebugToggle;
       if (strncmp(cmd, "V", 1) == 0)
@@ -1529,7 +1550,7 @@ void loop() {
     CommandId commandId = classifyCommand(command);
     switch (commandId) {
     case CommandId::IdQuery:
-      Serial.println("NEB_control");
+      Serial.println("TCM_control");
       break;
 
     case CommandId::ProtocolVersionQuery:
@@ -1631,6 +1652,10 @@ void loop() {
       DEBUG_PRINTLN("L?      - Show loaded flow curve status");
       DEBUG_PRINTLN("[Cough]");
       DEBUG_PRINTLN("R       - Run the loaded flow curve dataset");
+      DEBUG_PRINTLN("R*      - Run the loaded flow curve without saving or "
+                    "streaming its log");
+      DEBUG_PRINTLN("R-      - Run the loaded flow curve without sending out "
+                    "trigger pulses");
       DEBUG_PRINTLN("D       - Droplet-detect only (cont.)");
       DEBUG_PRINTLN("D <n>   - Droplet-detect only n times then stop");
       DEBUG_PRINTLN("D!      - Droplet-detect then run flow curve (cont.)");
@@ -1718,6 +1743,8 @@ void loop() {
         printError("Nebuliser pressure input out of range!");
       } else {
         neb_pressure.set_mA(current);
+        DEBUG_PRINT("Last set bitvalue of pressure regulator: ");
+        DEBUG_PRINTLN(neb_pressure.get_last_set_bitval());
         Serial.print("SET_NEB_PRESSURE ");
         Serial.println(bar, 2);
       }
@@ -1792,10 +1819,43 @@ void loop() {
     }
 
     case CommandId::FanSpeed: {
-      // TODO: Implement fan speed control on PIN_FAN (pin 3).
-      // Hardware not yet finalised — likely PWM.
-      // Placeholder: accepts a speed value but does nothing.
-      Serial.println("FAN_SPEED_SET");
+      // Command: F <level>
+      // level is normalized PWM duty in [0.0, 1.0].
+      char *valueStart = command + 1;
+      while (*valueStart == ' ') {
+        valueStart++;
+      }
+
+      if (*valueStart == '\0') {
+        printError("F expects a value in [0.0, 1.0]!");
+        return;
+      }
+
+      char *endPtr = nullptr;
+      double normalized = strtod(valueStart, &endPtr);
+      while (*endPtr == ' ') {
+        endPtr++;
+      }
+
+      if (endPtr == valueStart || *endPtr != '\0') {
+        printError("F expects a numeric value in [0.0, 1.0]!");
+        return;
+      }
+
+      if (normalized < 0.0 || normalized > 1.0) {
+        printError("Fan speed out of range! Use 0.0 to 1.0.");
+        return;
+      }
+
+      uint8_t duty = (uint8_t)(normalized * 255.0); // Non-inverted PWM for
+      // LED
+      analogWrite(PIN_FAN, duty);
+      // digitalWrite(PIN_FAN, normalized > 0.0 ? HIGH : LOW);
+
+      Serial.print("SET_FAN ");
+      Serial.print((float)normalized, 3);
+      Serial.print(" DUTY ");
+      Serial.println((int)duty);
       break;
     }
 
@@ -1840,7 +1900,8 @@ void loop() {
         return;
       }
 
-      uint8_t duty = (uint8_t)(normalized * 255.0 + 0.5);
+      uint8_t duty =
+          (uint8_t)(255.0 - normalized * 255.0); // Inverted PWM for LED
       analogWrite(PIN_LIGHT, duty);
 
       Serial.print("SET_LIGHT ");
@@ -2026,7 +2087,9 @@ void loop() {
       }
       break;
 
-    case CommandId::Run: {
+    case CommandId::Run:
+    case CommandId::RunUnlogged: {
+    case CommandId::RunTriggerless: {
       // Start a single run using the loaded dataset
       if (dataIndex == 0) {
         printError("Dataset is empty! Upload first using L command.");
@@ -2038,9 +2101,14 @@ void loop() {
       } else {
         // Step 1: clear other active modes and reset mode flags/outputs.
         stopActiveModes(false);
+        suppressRunTriggers = (commandId == CommandId::RunTriggerless);
 
-        // Step 2: start fresh run session (file/counter reset).
-        startRunSession();
+        // Step 2: only regular runs start a new persisted log session.
+        if (commandId == CommandId::RunUnlogged) {
+          saveRunLogToFlash = false;
+        } else {
+          startRunSession();
+        }
 
         // Step 3: branch run mode based on pre-trigger delay setting.
         if (pre_trigger_delay_us > 0) {

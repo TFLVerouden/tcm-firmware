@@ -13,15 +13,15 @@ See also the [Twente Cough Machine hardware documentation](https://github.com/TF
 | Tank pressure regulator T-Click chip select | 10 |
 | Nebuliser pressure regulator T-Click chip select | 4 |
 | Tank pressure sensor R-Click chip select | 2 |
-| Nebuliser pressure sensor R-Click chip select | 13 |
+| Nebuliser pressure sensor R-Click chip select | 5 |
 | Trigger output | 9 |
 | Laser MOSFET gate | 12 |
-| Light PWM output | 5 |
+| Light PWM output | 13 |
 | Fan PWM output | 3 |
-| Nebuliser enable | A3 |
+| Nebuliser enable | A5 |
 | Photodetector input | A2 |
 
-All controlled outputs start LOW at boot. The tank pressure regulator restores its last valid saved setting from QSPI flash; when no valid setting is available, it uses the firmware default of 4.0 mA. Pressure conversion and sensor calibration constants are defined in [src/main.cpp](src/main.cpp).
+All controlled outputs except the LED driver start LOW at boot. The tank pressure regulator restores its last valid saved setting from QSPI flash; when no valid setting is available, it uses the firmware default of 4.0 mA. Pressure conversion and sensor calibration constants are defined in [src/main.cpp](src/main.cpp).
 
 ## Build & upload
 
@@ -52,10 +52,10 @@ The firmware responds on the same serial connection. Enable debug output with `B
 | `M <bar>` | Set nebuliser pressure regulator target in bar. | `SET_NEB_PRESSURE <bar>` |
 | `O` | Open the solenoid valve. | `SOLENOID_OPENED` |
 | `C` | Close the solenoid valve. | `SOLENOID_CLOSED` |
-| `I <level>` | Set light output on pin 5 with normalized PWM from `0.0` to `1.0`. | `SET_LIGHT <level> DUTY <0-255>` |
+| `I <level>` | Set light output on pin 5 with normalized PWM from `0.0` to `1.0`. | `SET_LIGHT <level> DUTY <255-0>` |
 | `G` | Send one trigger pulse with the firmware-defined width. | `TRIGGER_PULSE_SENT` |
 | `A <0\|1>` | Disable or enable laser test mode; enabled mode streams photodiode readings. | `LASER_TEST_OFF` or `LASER_TEST_ON` |
-| `F <val>` | Set fan speed on pin 3. The hardware implementation is currently a placeholder. | `FAN_SPEED_SET` |
+| `F <val>` | Set fan speed on pin 3 on (>0.0 - 1.0) or off (0.0) with normalized PWM from `0.0` to `1.0`. | `SET_FAN <level>` DUTY <0-255> |
 | `N <0\|1>` | Disable or enable the nebuliser on pin A3. | `NEBULISER_OFF` or `NEBULISER_ON` |
 | `Q` | Quit active modes and return to idle. | `RETURNED_TO_IDLE` |
 
@@ -88,12 +88,14 @@ The firmware responds on the same serial connection. Enable debug output with `B
 | Command | Description | Reply |
 | --- | --- | --- |
 | `R` | Run the loaded flow curve. | `STARTING_RUN`, `FINISHED`, and log-transfer markers |
+| `R*` | Run the loaded flow curve without saving or streaming its run log. | `STARTING_RUN`, `FINISHED` |
+| `R-` | Run the loaded flow curve without emitting dataset trigger pulses; save and stream the run log as for `R`. | `STARTING_RUN`, `FINISHED`, and log-transfer markers |
 | `D` | Arm continuous droplet detection only. | `DROPLET_ARMED`, then `DROPLET_DETECTED` |
 | `D <n>` | Detect `n` droplets, then stop. | `DROPLET_ARMED` |
 | `D!` | Continuously detect droplets and run the loaded flow curve after each detection. | `DROPLET_ARMED` |
 | `D! <n>` | Detect `n` droplets and run the loaded flow curve after each detection. | `DROPLET_ARMED` |
 
-The host and MCU protocol versions must match exactly. Increase the protocol version only for breaking serial-contract changes. A dataset trigger event is independent of solenoid state, and its pulse width is defined by `TRIGGER_WIDTH` in [src/main.cpp](src/main.cpp).
+The host and MCU protocol versions must match exactly. Increase the protocol version only for breaking serial-contract changes. A dataset trigger event is independent of solenoid state, and its pulse width is defined by `TRIGGER_WIDTH` in [src/main.cpp](src/main.cpp). When no dataset trigger fires, including during `R-`, the log's `trigger_t0_us` is the run start timestamp.
 
 ## Files
 
