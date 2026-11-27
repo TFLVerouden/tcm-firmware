@@ -1421,7 +1421,7 @@ void loop() {
       LoadDataset,
       DatasetStatus,
       Run,
-      RunTest,
+      RunUnlogged,
       DropletRun,
       DropletDetect,
       Other
@@ -1450,7 +1450,7 @@ void loop() {
       if (strncmp(cmd, "D!", 2) == 0)
         return CommandId::DropletRun;
       if (strncmp(cmd, "R*", 2) == 0)
-        return CommandId::RunTest;
+        return CommandId::RunUnlogged;
       if (strncmp(cmd, "B", 1) == 0)
         return CommandId::DebugToggle;
       if (strncmp(cmd, "V", 1) == 0)
@@ -1643,8 +1643,8 @@ void loop() {
       DEBUG_PRINTLN("L?      - Show loaded flow curve status");
       DEBUG_PRINTLN("[Cough]");
       DEBUG_PRINTLN("R       - Run the loaded flow curve dataset");
-      DEBUG_PRINTLN("R*      - Run the loaded flow curve without saving or "
-                    "streaming its log");
+      DEBUG_PRINTLN("R*      - Run the loaded flow curve without keeping"
+                    "its log");
       DEBUG_PRINTLN("D       - Droplet-detect only (cont.)");
       DEBUG_PRINTLN("D <n>   - Droplet-detect only n times then stop");
       DEBUG_PRINTLN("D!      - Droplet-detect then run flow curve (cont.)");
@@ -2077,7 +2077,7 @@ void loop() {
       break;
 
     case CommandId::Run:
-    case CommandId::RunTest: {
+    case CommandId::RunUnlogged: {
       // Start a single run using the loaded dataset
       if (dataIndex == 0) {
         printError("Dataset is empty! Upload first using L command.");
@@ -2091,7 +2091,7 @@ void loop() {
         stopActiveModes(false);
 
         // Step 2: only regular runs start a new persisted log session.
-        if (commandId == CommandId::RunTest) {
+        if (commandId == CommandId::RunUnlogged) {
           saveRunLogToFlash = false;
         } else {
           startRunSession();
