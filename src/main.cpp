@@ -1427,7 +1427,7 @@ void loop() {
       LoadDataset,
       DatasetStatus,
       Run,
-      RunTest,
+      RunUnlogged,
       RunTriggerless,
       DropletRun,
       DropletDetect,
@@ -1457,7 +1457,7 @@ void loop() {
       if (strncmp(cmd, "D!", 2) == 0)
         return CommandId::DropletRun;
       if (strncmp(cmd, "R*", 2) == 0)
-        return CommandId::RunTest;
+        return CommandId::RunUnlogged;
       if (strncmp(cmd, "R-", 2) == 0)
         return CommandId::RunTriggerless;
       if (strncmp(cmd, "B", 1) == 0)
@@ -2088,7 +2088,7 @@ void loop() {
       break;
 
     case CommandId::Run:
-    case CommandId::RunTest:
+    case CommandId::RunUnlogged: {
     case CommandId::RunTriggerless: {
       // Start a single run using the loaded dataset
       if (dataIndex == 0) {
@@ -2103,8 +2103,8 @@ void loop() {
         stopActiveModes(false);
         suppressRunTriggers = (commandId == CommandId::RunTriggerless);
 
-        // Step 2: test runs skip logging; other runs start a new session.
-        if (commandId == CommandId::RunTest) {
+        // Step 2: only regular runs start a new persisted log session.
+        if (commandId == CommandId::RunUnlogged) {
           saveRunLogToFlash = false;
         } else {
           startRunSession();
