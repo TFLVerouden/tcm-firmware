@@ -1009,6 +1009,7 @@ void loop() {
   static LoopMode mode = LoopMode::Idle;
   static bool solValveOpen = false;      // Tracks if valve is currently open
   static bool performingTrigger = false; // Tracks if trigger pulse is active
+  static bool suppressRunTriggers = false;
   static bool belowThreshold = false;    // Tracks if signal is below threshold
   static bool detectionBaselineReady =
       false; // True after first valid post-delay sample is captured
@@ -1079,6 +1080,9 @@ void loop() {
       performingTrigger = false;
     }
 
+    // Turn off LED light
+    digitalWrite(PIN_LIGHT, HIGH);
+
     // Ensure solenoid and proportional valve return to safe defaults.
     if (solValveOpen) {
       closeSolValve();
@@ -1100,6 +1104,7 @@ void loop() {
     sequenceIndex = 0;
     dropletRunsRemaining = 0;
     runAfterDropletDetection = false;
+    suppressRunTriggers = false;
     belowThreshold = false;
     detectionBaselineReady = false;
 
@@ -1303,7 +1308,7 @@ void loop() {
       }
 
       // Trigger column controls trigger pulses independently of solenoid state
-      if (trigger) {
+      if (trigger && !suppressRunTriggers) {
         trigOut();
         markRunTrigger();
         performingTrigger = true;
@@ -1333,6 +1338,7 @@ void loop() {
         currentCount = 0;
       }
       saveRunLogToFlash = true;
+      suppressRunTriggers = false;
 
       // If in multi-run mode, re-arm detection for the next droplet
       if (dropletRunsRemaining != 0) {
@@ -1422,6 +1428,7 @@ void loop() {
       DatasetStatus,
       Run,
       RunUnlogged,
+      RunTriggerless,
       DropletRun,
       DropletDetect,
       Other
@@ -1451,6 +1458,8 @@ void loop() {
         return CommandId::DropletRun;
       if (strncmp(cmd, "R*", 2) == 0)
         return CommandId::RunUnlogged;
+      if (strncmp(cmd, "R-", 2) == 0)
+        return CommandId::RunTriggerless;
       if (strncmp(cmd, "B", 1) == 0)
         return CommandId::DebugToggle;
       if (strncmp(cmd, "V", 1) == 0)
@@ -1643,8 +1652,10 @@ void loop() {
       DEBUG_PRINTLN("L?      - Show loaded flow curve status");
       DEBUG_PRINTLN("[Cough]");
       DEBUG_PRINTLN("R       - Run the loaded flow curve dataset");
-      DEBUG_PRINTLN("R*      - Run the loaded flow curve without keeping"
-                    "its log");
+      DEBUG_PRINTLN("R*      - Run the loaded flow curve without saving or "
+                    "streaming its log");
+      DEBUG_PRINTLN("R-      - Run the loaded flow curve without sending out "
+                    "trigger pulses");
       DEBUG_PRINTLN("D       - Droplet-detect only (cont.)");
       DEBUG_PRINTLN("D <n>   - Droplet-detect only n times then stop");
       DEBUG_PRINTLN("D!      - Droplet-detect then run flow curve (cont.)");
@@ -2078,6 +2089,7 @@ void loop() {
 
     case CommandId::Run:
     case CommandId::RunUnlogged: {
+    case CommandId::RunTriggerless: {
       // Start a single run using the loaded dataset
       if (dataIndex == 0) {
         printError("Dataset is empty! Upload first using L command.");
@@ -2089,6 +2101,7 @@ void loop() {
       } else {
         // Step 1: clear other active modes and reset mode flags/outputs.
         stopActiveModes(false);
+        suppressRunTriggers = (commandId == CommandId::RunTriggerless);
 
         // Step 2: only regular runs start a new persisted log session.
         if (commandId == CommandId::RunUnlogged) {
