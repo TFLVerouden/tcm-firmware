@@ -1079,6 +1079,9 @@ void loop() {
       performingTrigger = false;
     }
 
+    // Turn off LED light
+    digitalWrite(PIN_LIGHT, HIGH);
+
     // Ensure solenoid and proportional valve return to safe defaults.
     if (solValveOpen) {
       closeSolValve();
